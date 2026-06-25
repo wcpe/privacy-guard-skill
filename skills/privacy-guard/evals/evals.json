@@ -1,0 +1,26 @@
+{
+  "skill_name": "privacy-guard",
+  "evals": [
+    {
+      "id": 0,
+      "name": "worktree-opensource-selfcheck",
+      "prompt": "这个项目我准备开源了，帮我扫一遍有没有不小心硬编码进去的密钥、密码或者隐私信息，免得推到 GitHub 上泄露。仓库就在当前目录。",
+      "expected_output": "对工作区做隐私扫描，产出分级报告：命中 AWS key、数据库连接串密码、GitHub token、通用高熵密钥、.env.production 文件、私钥文件、内网 IP/主机名、本地用户名路径、内部邮箱、身份证号、银行卡号、手机号；放过 .env.example 与占位符与非 Luhn 数字；命中片段打码不落明文；给出修复建议。",
+      "files": ["fixture: opensource"]
+    },
+    {
+      "id": 1,
+      "name": "git-history-leak-scan",
+      "prompt": "我有点担心几个月前可能不小心把数据库密码和一个 API key 提交到 git 里了，后来虽然删了文件但心里没底。能不能查一下 git 历史记录里到底有没有这些敏感信息残留？",
+      "expected_output": "扫 git 历史（非仅工作区），在历史提交的 blob 里找出已被删除的数据库密码 / API key，定位到涉及的提交；说明删文件不等于安全、必须轮换密钥并给历史清除（git filter-repo/BFG）指引；不自动改写历史。",
+      "files": ["fixture: history"]
+    },
+    {
+      "id": 2,
+      "name": "staged-scan-and-install-hook",
+      "prompt": "提交之前帮我检查一下暂存/将要提交的改动里有没有泄露敏感数据，另外我想以后每次 commit 都能自动拦截这种泄露，帮我把这个防护装上。",
+      "expected_output": "扫描即将提交的内容发现其中的敏感数据并报告；按用户明确要求安装 pre-commit 拦截钩子（把 scan.py 与 pre-commit 装进 .git/hooks，命中 critical 时拦截）；说明钩子拦不住已在历史里的旧泄露、可被 --no-verify 绕过。",
+      "files": ["fixture: precommit"]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "privacy-guard",
+  "owner": {
+    "name": "wcpe"
+  },
+  "plugins": [
+    {
+      "name": "privacy-guard",
+      "source": "./",
+      "description": "隐私/敏感数据检测技能：扫描项目工作区与 git 全量历史，按五大类产出脱敏分级报告 + 修复指引，可选 pre-commit 拦截钩子。只检测不改写。"
+    }
+  ]
+}

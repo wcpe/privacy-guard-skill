@@ -1,0 +1,21 @@
+# IDE / 操作系统
+/.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 过程性临时文件 / 扫描报告（报告绝不入库）
+/.tmp/
+privacy-scan.*
+
+# 评估工作区（skill-creator 产物）
+*-workspace/
+privacy-guard-workspace/
+
+# 打包产物（.skill 可由 package_skill 重新生成）
+*.skill
+/dist/

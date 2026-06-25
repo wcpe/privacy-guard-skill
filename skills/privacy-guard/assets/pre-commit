@@ -1,0 +1,41 @@
+#!/bin/sh
+# privacy-guard 提交前拦截钩子。
+# 作用：提交前扫描**暂存内容**，命中致命敏感数据(critical)时拦下本次提交。
+# 安装（见 SKILL.md 第 5 步）：把本文件与 scan.py 一起放进 .git/hooks/，
+#   scan.py 命名为 privacy_scan.py，钩子调用同目录副本，不依赖外部路径。
+#   cp <技能目录>/scripts/scan.py   .git/hooks/privacy_scan.py
+#   cp <技能目录>/assets/pre-commit .git/hooks/pre-commit
+#   chmod +x .git/hooks/pre-commit
+
+HOOK_DIR=$(dirname "$0")
+SCAN="$HOOK_DIR/privacy_scan.py"
+
+# 逐个候选验证「能真正跑 Python」再采用——绕开 Windows 的 Microsoft Store
+# python3 假桩（它能被 command -v 找到却不真执行脚本，会让钩子静默失效）。
+PY=""
+for c in python3 python py; do
+  if command -v "$c" >/dev/null 2>&1 && "$c" -c "import sys" >/dev/null 2>&1; then
+    PY="$c"; break
+  fi
+done
+
+# 缺可用 python 或缺扫描脚本：不阻断正常提交，仅提示（避免把钩子变成开发障碍）
+if [ -z "$PY" ] || [ ! -f "$SCAN" ]; then
+  echo "[privacy-guard] 跳过：未找到可用的 python 或 privacy_scan.py" >&2
+  exit 0
+fi
+
+# 扫暂存区；脚本退出码 2=critical / 1=major / 0=干净
+"$PY" "$SCAN" --mode staged --path . --format md
+code=$?
+
+if [ "$code" -eq 2 ]; then
+  echo "" >&2
+  echo "[privacy-guard] ⛔ 检测到致命敏感数据(critical)，已拦截本次提交。" >&2
+  echo "  请核实上面位置并移除 / 脱敏后重新提交。" >&2
+  echo "  确属误报时可用  git commit --no-verify  跳过（自负其责），并考虑补白名单。" >&2
+  exit 1
+fi
+
+# major / minor 只提示不阻断（上面报告已打印），让开发自行判断
+exit 0
