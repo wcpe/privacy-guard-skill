@@ -74,6 +74,33 @@ def luhn_valid(num):
     return total % 10 == 0
 
 
+def _is_datetime14(num):
+    """14 位 yyyymmddhhmmss 时间戳判定。
+    Go 伪版本号（v0.0.0-20240121214520-…）、go.sum 哈希行、日志时间戳都是这种 14 位串，
+    会以约 1/10 的概率偶然通过 Luhn 校验而被 bank-card 误判，故在校验中排除。"""
+    if len(num) != 14:
+        return False
+    y, mo, d = int(num[0:4]), int(num[4:6]), int(num[6:8])
+    h, mi, s = int(num[8:10]), int(num[10:12]), int(num[12:14])
+    return (1970 <= y <= 2099 and 1 <= mo <= 12 and 1 <= d <= 31
+            and h <= 23 and mi <= 59 and s <= 59)
+
+
+def bank_card_valid(m):
+    """银行卡校验：Luhn 通过，且排除两类高频「数字串」误报 ——
+    ① 浮点小数尾数：命中串紧邻前缀为 `<数字>.`（如 Prometheus 指标 20.00242334472774 的小数部分）；
+    ② 14 位 yyyymmddhhmmss 时间戳（Go 伪版本号 / go.sum 哈希行 / 日志时间戳）。
+    Luhn 无法区分这些串与真实卡号（任意 14 位串约 1/10 撞中），故以语义守卫补足精度。"""
+    num = m.group(0)
+    if not luhn_valid(num):
+        return False
+    if _is_datetime14(num):
+        return False
+    if re.search(r"\d\.$", m.string[:m.start()]):
+        return False
+    return True
+
+
 def cn_id_valid(s):
     """中国大陆 18 位身份证号 ISO 7064 mod 11-2 校验码 + 出生年份粗校验。"""
     if len(s) != 18:
@@ -179,7 +206,7 @@ CONTENT_RULES = [
           validator=lambda m: cn_id_valid(m.group(0))),
     _rule("bank-card", CAT2, SEV_CRIT,
           r"(?<!\d)\d{13,19}(?!\d)", r"\d{13,19}",
-          validator=lambda m: luhn_valid(m.group(0))),
+          validator=bank_card_valid),
     _rule("email", CAT2, SEV_MINOR,
           r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
           r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
