@@ -27,21 +27,31 @@ python skills/privacy-guard/scripts/scan.py --mode all --path . --out .tmp/priva
 # 退出码：2=有 critical，1=有 major，0=干净（便于接进 CI / 钩子）
 ```
 
+## Claude Code 专属增强（v0.2.0）
+
+除技能外，给 **Claude Code** 捆绑三类组件（仅 CC 生效；引擎仍是同一个 `scan.py`，Codex/opencode 照常用技能）：
+
+- **提交门护栏 hook** `hooks/`：在 Claude 会话里 `git commit` 时，自动对**暂存内容**跑 `scan.py --mode staged`——命中 🔴critical 即**阻断提交**并列打码位置；🟡major 警告不挡。比手动装 git 钩子省事（任意项目即时生效；缺 python 时优雅降级、不挡正常提交）。
+- **斜杠命令** `commands/`：`/privacy-scan`（工作区+历史）、`/privacy-scan-staged`（提交前自查）、`/privacy-scan-history`（查历史）、`/privacy-install-hook`（装 git pre-commit 钩子）。
+- **MCP 工具** `mcp/`：`privacy_scan(path, mode)`——复用 `scan.py` 返回结构化（已打码）findings，供 Claude / 工作流结构化调用。
+
+> Node 胶水只在真要扫时才拉起 `python scan.py`：引擎零改动，复用现成的 rg 预筛 + 熵值/Luhn/身份证校验/白名单。
+
 ## 安装
 
 同一套 `skills/`，三种工具都能用。仓库地址：`https://github.com/wcpe/privacy-guard-skill`。
 
 ### Claude Code（插件）
 
-本仓库自身即 marketplace，装后默认 **User 作用域**（所有项目可用）：
+本插件经 **wcpe 组织市场**（[wcpe/claude-plugins](https://github.com/wcpe/claude-plugins)）分发，装后默认 **User 作用域**（所有项目可用）：
 
 ```
-/plugin marketplace add wcpe/privacy-guard-skill   # git 地址或本地路径均可
-/plugin install privacy-guard@privacy-guard        # 格式：<插件名>@<市场名>
-/plugin marketplace update privacy-guard           # 以后更新到最新
+/plugin marketplace add wcpe/claude-plugins        # wcpe 组织市场（含 privacy-guard 等）
+/plugin install privacy-guard@wcpe                  # 格式：<插件名>@<市场名>
+/plugin marketplace update wcpe                     # 以后更新到最新
 ```
 
-CLI 等价：`claude plugin marketplace add wcpe/privacy-guard-skill` / `claude plugin install privacy-guard@privacy-guard`。
+CLI 等价：`claude plugin marketplace add wcpe/claude-plugins` / `claude plugin install privacy-guard@wcpe`。
 
 ### OpenAI Codex
 
@@ -70,21 +80,21 @@ cp -r privacy-guard-skill/skills/* ~/.config/opencode/skills/   # 全局
 ## 仓库结构
 
 ```
-privacy-guard-skill/                 ← 仓库根 = 插件 = marketplace
-├── .claude-plugin/                  Claude Code 插件清单
-│   ├── plugin.json
-│   └── marketplace.json             市场清单（source: "./"）
-├── .codex-plugin/                   Codex 插件清单
-│   └── plugin.json                  skills 指向 ./skills/
+privacy-guard-skill/                 ← 仓库根 = 插件本体（分发经 wcpe 组织市场 wcpe/claude-plugins）
+├── .claude-plugin/plugin.json       Claude Code 插件清单
+├── .codex-plugin/plugin.json        Codex 插件清单（skills 指向 ./skills/）
+├── .mcp.json                        MCP server 注册
+├── hooks/                           提交门护栏（Node 胶水 → scan.py）
+│   ├── hooks.json
+│   └── guard-commit.js
+├── commands/                        斜杠命令 /privacy-scan* 与 /privacy-install-hook
+├── mcp/privacy-mcp.mjs              MCP：privacy_scan(path, mode)
 └── skills/
     └── privacy-guard/
         ├── SKILL.md                 工作流：圈范围 → 扫描 → 核实 → 修复指引 → 可选钩子
-        ├── scripts/
-        │   └── scan.py              检测引擎（rg+py，worktree/history/staged/all）
-        ├── references/
-        │   └── patterns.md          5 类规则清单 · 白名单哲学 · 按类修复 · 历史清除指引
-        └── assets/
-            └── pre-commit           可选提交前拦截钩子（自包含）
+        ├── scripts/scan.py          检测引擎（rg+py，worktree/history/staged/all）
+        ├── references/patterns.md   5 类规则 · 白名单哲学 · 按类修复 · 历史清除指引
+        └── assets/pre-commit        可选 git 提交前拦截钩子（自包含）
 ```
 
 ## 边界与免责
