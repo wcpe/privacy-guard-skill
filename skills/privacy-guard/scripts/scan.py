@@ -312,6 +312,10 @@ def _rg_candidate_files(root):
            "--null", "-e", union]
     for d in NOISE_DIRS:
         cmd += ["-g", "!%s" % d]
+    # 显式把搜索根当作路径参数传给 rg：某些嵌套子进程环境（如经 Node 派生 python，
+    # 插件的 MCP / hook 即如此）下 rg 不採用 subprocess 的 cwd、会在错误目录里搜出空结果，
+    # 静默漏掉真泄露。显式路径不踩这个坑（cwd 仍保留，二者一致）。
+    cmd.append(root)
     try:
         res = subprocess.run(cmd, cwd=root, capture_output=True, timeout=120)
     except Exception:
