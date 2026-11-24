@@ -1,0 +1,59 @@
+# privacy-guard CI 扫描（GitHub Actions）。拷到 .github/workflows/privacy-scan.yml。
+# PR：只扫 base..head 新增内容；推到主线：扫工作区。结果以 SARIF 上传到 Code Scanning，critical 判失败。
+name: privacy-scan
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+permissions:
+  contents: read
+  security-events: write
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: wcpe/privacy-guard-skill
+          path: .privacy-guard-tool
+      - name: 扫描
+        shell: bash
+        env:
+          # 事件字段经 env 传入，不直接拼进脚本源码，防止分支名注入命令
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -o pipefail
+          # 工具移出工作区，免得扫工作区时把它自己扫进去
+          mv .privacy-guard-tool "$RUNNER_TEMP/privacy-guard"
+          SCAN="$RUNNER_TEMP/privacy-guard/skills/privacy-guard/scripts/scan.py"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            ARGS=(--since "origin/$BASE_REF")
+            # PR 门禁用 base 分支上的配置与基线，待审 PR 改不动自己的豁免策略
+            CFG="$RUNNER_TEMP/pg-config.json"
+            git show "origin/$BASE_REF:.privacy-guard.json" > "$CFG" 2>/dev/null || echo '{}' > "$CFG"
+            ARGS+=(--config "$CFG")
+            BL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("baseline") or "")' "$CFG")
+            if [ -n "$BL" ] && git show "origin/$BASE_REF:$BL" > "$RUNNER_TEMP/pg-baseline.json" 2>/dev/null; then
+              ARGS+=(--baseline "$RUNNER_TEMP/pg-baseline.json")
+            else
+              ARGS+=(--no-baseline)
+            fi
+            if ! git diff --quiet "origin/$BASE_REF...HEAD" -- .privacy-guard.json ${BL:+"$BL"}; then
+              echo "::warning::本 PR 修改了隐私扫描配置或基线，门禁已按 base 分支的版本判定，请人工审阅这些改动"
+            fi
+          else
+            ARGS=(--mode worktree)
+          fi
+          code=0
+          python3 "$SCAN" "${ARGS[@]}" --path . --format md --fail-on critical | tee -a "$GITHUB_STEP_SUMMARY" || code=$?
+          python3 "$SCAN" "${ARGS[@]}" --path . --format sarif --fail-on never --out "$RUNNER_TEMP/privacy"
+          exit "$code"
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: ${{ runner.temp }}/privacy.sarif
+          category: privacy-guard

@@ -10,7 +10,7 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const SCAN = join(HERE, '..', 'skills', 'privacy-guard', 'scripts', 'scan.py')
 const { findPython } = createRequire(import.meta.url)('../hooks/find-python.cjs')
 const PLUGIN_ROOT = resolve(HERE, '..')
-const SERVER = { name: 'privacy-guard', version: '0.3.0' }
+const SERVER = { name: 'privacy-guard', version: '0.4.0' }
 
 const TOOLS = [
   {
@@ -23,9 +23,12 @@ const TOOLS = [
         path: { type: 'string', description: '要扫描的项目根目录，建议传绝对路径（Devin 下 MCP 进程的工作目录是插件目录，不传会报错提示）' },
         mode: {
           type: 'string',
-          enum: ['worktree', 'history', 'staged', 'all'],
-          description: '范围：worktree=当前文件(默认,最快) / history=git 全量历史(可能慢) / staged=暂存区 / all=工作区+历史'
-        }
+          enum: ['worktree', 'history', 'staged', 'range', 'all'],
+          description: '范围：worktree=当前文件(默认,最快) / history=git 全量历史(可能慢) / staged=暂存区 / range=since..HEAD 的新增内容(PR / 版本门) / all=工作区+历史'
+        },
+        since: { type: 'string', description: 'range 模式起点：tag / 分支 / 提交（如上个发布 tag、PR 的 base 分支）。给了 since 且未给 mode 时自动用 range' },
+        fail_on: { type: 'string', enum: ['critical', 'major', 'minor', 'never'], description: '从哪一级起判为不通过（默认取项目 .privacy-guard.json 的 fail_on，否则 major）' },
+        no_baseline: { type: 'boolean', description: '忽略项目基线，报出全部命中（默认按 .privacy-guard.json 的 baseline 接纳已知项）' }
       }
     }
   }
@@ -44,15 +47,22 @@ function privacyScan (args) {
   const project = process.env.DEVIN_PROJECT_DIR || process.env.CLAUDE_PROJECT_DIR || process.cwd()
   const dir = resolve(project, args.path || '.')
   if (dir === PLUGIN_ROOT && !(args.path && isAbsolute(args.path))) return text('请用 path 参数传入要扫描的项目根目录（绝对路径）：当前工作目录是插件自身目录，不是你的项目。', true)
-  const mode = args.mode || 'worktree'
-  const r = spawnSync(py, [SCAN, '--mode', mode, '--path', dir, '--format', 'json'], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
+  const mode = args.mode || (args.since ? 'range' : 'worktree')
+  const argv = [SCAN, '--mode', mode, '--path', dir, '--format', 'json']
+  if (args.since) argv.push('--since', String(args.since))
+  if (args.fail_on) argv.push('--fail-on', String(args.fail_on))
+  if (args.no_baseline) argv.push('--no-baseline')
+  const r = spawnSync(py, argv, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
   if (r.error) return text('引擎执行失败：' + r.error.message, true)
+  if (r.status === 3) return text((r.stderr || '').trim() || '扫描参数或项目配置有误', true)
   let data
   try { data = JSON.parse(r.stdout || '{}') } catch (e) { return text('引擎输出解析失败：\n' + (r.stdout || r.stderr || '').slice(0, 2000), true) }
   const c = data.counts || {}
-  const verdict = r.status === 2 ? '🔴 发现致命泄露(critical)' : r.status === 1 ? '🟡 发现疑似泄露(major)' : '✅ 未发现致命/疑似泄露'
-  const head = `隐私扫描（${dir}，mode=${mode}）：${verdict}\n统计：🔴 ${c.critical || 0} · 🟡 ${c.major || 0} · 🟢 ${c.minor || 0}（退出码 ${r.status}：2=critical/1=major/0=clean）\n所有片段已打码；明文请到对应位置核对。\n`
-  return text(head + '\n' + JSON.stringify({ scope: data.scope, counts: c, findings: data.findings || [] }, null, 2))
+  const c0 = data.counts || {}
+  const verdict = (c0.critical ? '🔴 发现致命泄露(critical)' : c0.major ? '🟡 发现疑似泄露(major)' : '✅ 未发现致命/疑似泄露') + (r.status === 0 ? '，门槛通过' : '，门槛不通过')
+  const sup = data.suppressed || {}
+  const head = `隐私扫描（${dir}，${data.scope || mode}）：${verdict}\n统计：🔴 ${c.critical || 0} · 🟡 ${c.major || 0} · 🟢 ${c.minor || 0}（退出码 ${r.status}，门槛 fail_on=${data.fail_on}：2=critical/1=达到门槛/0=通过）\n已豁免：行内 ${sup.inline || 0} · 配置 ${sup.config || 0} · 基线 ${sup.baseline || 0}\n所有片段已打码；明文请到对应位置核对。\n`
+  return text(head + '\n' + JSON.stringify({ scope: data.scope, counts: c, suppressed: sup, passed: r.status === 0, findings: data.findings || [] }, null, 2))
 }
 
 function handle (msg) {

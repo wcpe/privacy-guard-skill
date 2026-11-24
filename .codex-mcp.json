@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "privacy-guard": {
+      "command": "node",
+      "args": [
+        "./mcp/privacy-mcp.mjs"
+      ],
+      "cwd": "."
+    }
+  }
+}

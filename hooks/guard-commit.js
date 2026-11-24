@@ -48,7 +48,12 @@ process.stdin.on('end', function () {
   if (critical.length) {
     const reason = '[privacy-guard] ⛔ 暂存区检测到致命敏感数据(critical)，已拦下本次提交：\n\n' + critical.join('\n\n') +
       '\n\n请移除 / 脱敏后重新提交。确属误报时可 `git commit --no-verify` 跳过（自负其责）并补白名单。'
-    process.stdout.write(JSON.stringify({ decision: 'block', reason: reason }) + '\n')
+    // decision:block 给 Devin / Claude，hookSpecificOutput.permissionDecision=deny 给 Codex / 新版 Claude
+    process.stdout.write(JSON.stringify({
+      decision: 'block',
+      reason: reason,
+      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason }
+    }) + '\n')
     console.error(reason)
     process.exit(2)
   }

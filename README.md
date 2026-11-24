@@ -1,6 +1,6 @@
 # Privacy Guard
 
-一个「隐私 / 敏感数据检测」AI 编码技能：扫描**当前项目工作区**与 **git 全量历史**，找出被硬编码进去的敏感数据，按**五大类**分级、**脱敏**报告，并给出**按类修复指引**。同一套 `SKILL.md` 通用于 **Claude Code**（插件一键装）、**Devin**（插件一键装）、**OpenAI Codex** 与 **opencode**。
+一个「隐私 / 敏感数据检测」AI 编码技能：扫描**当前项目工作区**与 **git 全量历史**，找出被硬编码进去的敏感数据，按**五大类**分级、**脱敏**报告，并给出**按类修复指引**。同一套 `SKILL.md` 通用于 **Claude Code / Devin / OpenAI Codex**（插件一键装）与任何只认技能目录的 agent（opencode、Cursor、Gemini CLI 等，拷目录即用）。在 [sdd-skills](https://github.com/wcpe/sdd-skills) 项目里，验收 / 发版 / 审查 / 改造技能会自动接入它。
 
 **只检测、只报告、给指引——绝不替你改写 git 历史、force-push 或吊销密钥**（这些不可逆、牵动远端与团队的操作，交由你知情后亲自执行）。
 
@@ -16,6 +16,14 @@
 
 检测引擎 `skills/privacy-guard/scripts/scan.py`：**rg + Python**——有 ripgrep 时用它加速文件预筛，再用 Python 做精确分类与**熵值 / Luhn / 身份证校验 / 白名单**降误报；无 rg 时全量遍历，结果一致。报告里命中片段一律**打码**，绝不落明文。
 
+## 能力一览
+
+- **五种范围**：`worktree` / `history` / `staged` / `all`，以及 `--since <ref>` 只扫区间新增（PR 门、发版门）。
+- **项目配置** `.privacy-guard.json`：按规则 / 路径 / 指纹豁免（必须写理由）、行内 `privacy-guard:allow`、改级别或关规则、加自定义规则、设 `fail_on` 门槛。
+- **基线**：老项目 `--write-baseline` 先记账已有命中，之后只拦新增；基线只存指纹、规则与路径，不存片段。
+- **输出**：Markdown / JSON / SARIF（GitHub Code Scanning），退出码 2=critical、1=达到门槛、0=通过、3=配置错误。
+- **拦截**：Claude / Devin / Codex 会话内提交门 hook；`install_hook.py` 一键装 git 钩子（识别 husky / core.hooksPath）；pre-commit 框架；GitHub Actions 模板。
+
 ## 怎么用
 
 技能触发后会：圈定范围（工作区 / 历史 / 暂存 / 全部）→ 跑 `scan.py` 出脱敏分级报告到 `.tmp/`（不入库）→ 对 🔴 项指出位置供你核实 → 按类给修复建议 → （你明确要时）装可选的 pre-commit 拦截钩子。
@@ -24,16 +32,33 @@
 
 ```bash
 python skills/privacy-guard/scripts/scan.py --mode all --path . --out .tmp/privacy-scan
-# 退出码：2=有 critical，1=有 major，0=干净（便于接进 CI / 钩子）
+python skills/privacy-guard/scripts/scan.py --since v1.2.0 --fail-on critical      # 只看上个版本以来新增
+python skills/privacy-guard/scripts/scan.py --mode all --write-baseline .privacy-guard-baseline.json  # 老项目记基线
+python skills/privacy-guard/scripts/scan.py --mode worktree --format sarif --out .tmp/privacy        # 给 Code Scanning
 ```
 
-## Claude Code 专属增强（v0.2.0）
+配置格式、基线与豁免规则见 `skills/privacy-guard/SKILL.md`「项目配置与基线」。
+
+### 接入 pre-commit 框架 / CI
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/wcpe/privacy-guard-skill
+    rev: v0.4.0        # 或某个提交 SHA
+    hooks:
+      - id: privacy-guard
+```
+
+GitHub Actions：把 `skills/privacy-guard/assets/ci/github-actions.yml` 拷到 `.github/workflows/privacy-scan.yml`。
+
+## 插件增强（Claude Code / Devin / Codex）
 
 除技能外，给 **Claude Code** 捆绑三类组件（仅 CC 生效；引擎仍是同一个 `scan.py`，Codex/opencode 照常用技能）：
 
 - **提交门护栏 hook** `hooks/`：在 Claude 会话里 `git commit` 时，自动对**暂存内容**跑 `scan.py --mode staged`——命中 🔴critical 即**阻断提交**并列打码位置；🟡major 警告不挡。比手动装 git 钩子省事（任意项目即时生效；缺 python 时优雅降级、不挡正常提交）。
-- **斜杠命令** `commands/`：`/privacy-scan`（工作区+历史）、`/privacy-scan-staged`（提交前自查）、`/privacy-scan-history`（查历史）、`/privacy-install-hook`（装 git pre-commit 钩子）。
-- **MCP 工具** `mcp/`：`privacy_scan(path, mode)`——复用 `scan.py` 返回结构化（已打码）findings，供 Claude / 工作流结构化调用。
+- **斜杠命令** `commands/`（仅 Claude Code）：`/privacy-scan`（工作区+历史）、`/privacy-scan-staged`、`/privacy-scan-history`、`/privacy-scan-range <ref>`、`/privacy-install-hook`。
+- **MCP 工具** `mcp/`：`privacy_scan(path, mode, since, fail_on, no_baseline)`——复用 `scan.py` 返回结构化（已打码）findings 与是否通过门槛。
 
 > Node 胶水只在真要扫时才拉起 `python scan.py`：引擎零改动，复用现成的 rg 预筛 + 熵值/Luhn/身份证校验/白名单。
 
@@ -63,7 +88,7 @@ CLI 等价：`claude plugin marketplace add wcpe/claude-plugins` / `claude plugi
 
 ### OpenAI Codex
 
-Codex 原生认 `SKILL.md`。最稳的装法是把技能放进 Codex 的技能目录（无需清单）：
+`.codex-plugin/plugin.json` 声明了技能、MCP（`.codex-mcp.json`，以插件根为工作目录）和提交门 hook（复用 `hooks/hooks.json`，匹配 `Bash`；拦截时同时输出 `permissionDecision: deny`）。Codex 插件形式尚未在真实 Codex 中验证；只要技能的话，按目录安装最稳：
 
 ```
 git clone https://github.com/wcpe/privacy-guard-skill
@@ -83,6 +108,17 @@ cp -r privacy-guard-skill/skills/* ~/.config/opencode/skills/   # 全局
 # 或仅当前项目：拷进 <项目>/.opencode/skills/（或 .claude/skills/）
 ```
 
+### 其他只认技能的 agent
+
+| agent | 全局目录 | 项目目录 |
+|---|---|---|
+| Claude Code（不装插件） | `~/.claude/skills/` | `<项目>/.claude/skills/` |
+| Cursor | `~/.cursor/skills/` | `<项目>/.cursor/skills/` |
+| Gemini CLI | `~/.gemini/skills/` | `<项目>/.gemini/skills/` |
+| 通用约定 | `~/.agents/skills/` | `<项目>/.agents/skills/` |
+
+拷 `skills/privacy-guard` 整个目录即可；具体目录以各 agent 当前文档为准。纯技能方式下没有会话内提交门与 MCP，用 `install_hook.py` 装 git 钩子补上拦截。
+
 > Windows 用 `Copy-Item privacy-guard-skill\skills\* <目标> -Recurse`。技能自带的 `scripts/` 与 `assets/` 随技能目录一起拷贝。
 
 ## 仓库结构
@@ -90,7 +126,10 @@ cp -r privacy-guard-skill/skills/* ~/.config/opencode/skills/   # 全局
 ```
 privacy-guard-skill/                 ← 仓库根 = 插件本体（分发经 wcpe 组织市场 wcpe/claude-plugins）
 ├── .claude-plugin/plugin.json       Claude Code 插件清单
-├── .codex-plugin/plugin.json        Codex 插件清单（skills 指向 ./skills/）
+├── .codex-plugin/plugin.json        Codex 插件清单（技能 + .codex-mcp.json + hooks/hooks.json）
+├── .codex-mcp.json                  Codex 的 MCP 注册
+├── .pre-commit-hooks.yaml           pre-commit 框架 hook 定义
+├── .privacy-guard.json              本仓库自身的扫描配置（规则文档 / 测试夹具豁免）
 ├── .devin-plugin/plugin.json        Devin 插件清单（内联 MCP；hook 见根目录 hooks.json）
 ├── .mcp.json                        MCP server 注册（Claude Code）
 ├── hooks.json                       Devin 提交门 hook（匹配 exec）
@@ -105,9 +144,11 @@ privacy-guard-skill/                 ← 仓库根 = 插件本体（分发经 wc
 └── skills/
     └── privacy-guard/
         ├── SKILL.md                 工作流：圈范围 → 扫描 → 核实 → 修复指引 → 可选钩子
-        ├── scripts/scan.py          检测引擎（rg+py，worktree/history/staged/all）
+        ├── scripts/scan.py          检测引擎（rg+py，worktree/history/staged/range/all，配置 / 基线 / SARIF）
+        ├── scripts/install_hook.py  git pre-commit 钩子安装器
         ├── references/patterns.md   5 类规则 · 白名单哲学 · 按类修复 · 历史清除指引
-        └── assets/pre-commit        可选 git 提交前拦截钩子（自包含）
+        ├── assets/pre-commit        可选 git 提交前拦截钩子（自包含）
+        └── assets/ci/               GitHub Actions 扫描模板（SARIF）
 ```
 
 ## 边界与免责
