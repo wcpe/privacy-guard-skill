@@ -96,6 +96,24 @@ test('已豁免项在报告里逐条列出规则、位置与理由', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('历史与区间扫描里的行内豁免明细带提交号', () => {
+  const { dir, git } = repo({ 'a.txt': 'x\n' });
+  try {
+    git('add', '-A'); git('commit', '-qm', 'base');
+    writeFileSync(path.join(dir, 'b.txt'), `k = ${AWS} # privacy-guard:allow\n`);
+    git('add', '-A'); git('commit', '-qm', 'add');
+    const sha = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+    for (const extra of [['--mode', 'history'], ['--since', 'HEAD~1']]) {
+      const { d } = json(dir, ...extra);
+      const item = d.suppressed_items.find((f) => f.kind === 'inline');
+      assert.ok(item, extra.join(' '));
+      assert.ok(item.commit && (item.commit.startsWith(sha) || sha.startsWith(item.commit)), `${extra.join(' ')} 带提交号：${item.commit}`);
+    }
+    const h = json(dir, '--mode', 'history').d.suppressed_items.find((f) => f.kind === 'inline');
+    assert.match(h.path, /^\[history\] /);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('fail_on 取值非法是配置错误（退出码 3）', () => {
   const { dir } = repo({ '.privacy-guard.json': JSON.stringify({ fail_on: 'high' }) });
   try {

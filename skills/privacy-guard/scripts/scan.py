@@ -476,11 +476,13 @@ def scan_history(root):
             continue
         text = raw.decode("utf-8", "replace")
         hits = []
+        sup_from = len(SUPPRESSED_ITEMS)
         for i, line in enumerate(text.splitlines(), 1):
             hits += classify_line(rel, i, line)
-        if hits:
+        if hits or len(SUPPRESSED_ITEMS) > sup_from:
             commit = _history_commit_for_blob(root, sha)
-            for h in hits:
+            # 行内豁免明细同样标上 [history] 与提交号，便于审计
+            for h in hits + SUPPRESSED_ITEMS[sup_from:]:
                 h["path"] = "[history] %s" % rel
                 h["commit"] = commit
             findings += hits
@@ -559,9 +561,12 @@ def scan_range(root, since, until="HEAD"):
             lineno = int(m.group(1)) if m else 0
         elif cur and len(ln) >= width and ln[:width].strip("+ ") == "" and "+" in ln[:width]:
             if ln[:width] == "+" * width:
+                sup_from = len(SUPPRESSED_ITEMS)
                 for f in classify_line(cur, lineno, ln[width:]):
                     f["commit"] = commit
                     findings.append(f)
+                for f in SUPPRESSED_ITEMS[sup_from:]:
+                    f["commit"] = commit
             lineno += 1
     return findings, True
 
