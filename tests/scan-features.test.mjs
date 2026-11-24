@@ -80,6 +80,7 @@ test('基线：写入后只报新增，基线文件不含明文', () => {
     assert.equal(scan(dir, '--mode', 'worktree', '--write-baseline', path.join(dir, '.privacy-guard-baseline.json')).status, 0);
     const base = readFileSync(path.join(dir, '.privacy-guard-baseline.json'), 'utf8');
     assert.ok(!base.includes(AWS));
+    assert.ok(JSON.parse(base).findings.every((x) => !('match' in x)), '基线不存片段');
     const clean = json(dir, '--mode', 'worktree');
     assert.equal(clean.r.status, 0);
     assert.equal(clean.d.suppressed.baseline, 1);

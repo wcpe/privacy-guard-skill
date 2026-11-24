@@ -609,12 +609,11 @@ def load_baseline(path):
 
 
 def write_baseline(path, findings):
-    """基线只存指纹与已打码的元数据（不含明文），可以入库。"""
+    """基线只存指纹、规则与路径，不存片段（打码片段配合无盐指纹可穷举还原手机号等低熵信息）。"""
     items = OrderedDict()
     for f in sorted(findings, key=lambda x: (x["rule"], _plain_path(x["path"]))):
         items.setdefault(f["fingerprint"], {"fingerprint": f["fingerprint"], "rule": f["rule"],
-                                             "severity": f["severity"], "path": _plain_path(f["path"]),
-                                             "match": f["match"]})
+                                             "severity": f["severity"], "path": _plain_path(f["path"])})
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
@@ -731,7 +730,7 @@ def main():
     ap.add_argument("--baseline", default=None, help="基线文件：其中的已知命中不再计入（默认取配置里的 baseline）")
     ap.add_argument("--no-baseline", action="store_true", help="忽略基线，报出全部命中")
     ap.add_argument("--write-baseline", default=None, metavar="FILE",
-                    help="把本次全部命中写成基线（只含指纹与打码片段）后以 0 退出")
+                    help="把本次全部命中写成基线（只含指纹、规则与路径）后以 0 退出")
     ap.add_argument("--fail-on", choices=["critical", "major", "minor", "never"], default=None,
                     help="从哪一级开始给非 0 退出码（默认 major：critical→2、major→1）")
     args = ap.parse_args()
@@ -770,7 +769,7 @@ def main():
     findings = apply_config(dedupe(findings), cfg)
     if args.write_baseline:
         n = write_baseline(args.write_baseline, findings)
-        sys.stdout.write("[privacy-guard] 已把 %d 项命中写入基线 %s（只含指纹与打码片段）\n" % (n, args.write_baseline))
+        sys.stdout.write("[privacy-guard] 已把 %d 项命中写入基线 %s（只含指纹、规则与路径）\n" % (n, args.write_baseline))
         sys.exit(0)
     if known:
         kept = [f for f in findings if f.get("fingerprint") not in known]

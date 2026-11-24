@@ -20,7 +20,7 @@
 
 - **五种范围**：`worktree` / `history` / `staged` / `all`，以及 `--since <ref>` 只扫区间新增（PR 门、发版门）。
 - **项目配置** `.privacy-guard.json`：按规则 / 路径 / 指纹豁免（必须写理由）、行内 `privacy-guard:allow`、改级别或关规则、加自定义规则、设 `fail_on` 门槛。
-- **基线**：老项目 `--write-baseline` 先记账已有命中，之后只拦新增；基线只存指纹与打码片段，可入库。
+- **基线**：老项目 `--write-baseline` 先记账已有命中，之后只拦新增；基线只存指纹、规则与路径，不存片段。
 - **输出**：Markdown / JSON / SARIF（GitHub Code Scanning），退出码 2=critical、1=达到门槛、0=通过、3=配置错误。
 - **拦截**：Claude / Devin / Codex 会话内提交门 hook；`install_hook.py` 一键装 git 钩子（识别 husky / core.hooksPath）；pre-commit 框架；GitHub Actions 模板。
 
