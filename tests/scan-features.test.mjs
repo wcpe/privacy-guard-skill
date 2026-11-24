@@ -55,6 +55,77 @@ test('行内豁免、配置 allow / ignore_paths / severity 生效且计入豁�
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+// 给 15 位数字补 Luhn 校验位，运行时拼出能过 Luhn 的卡号样例
+const luhn = (body) => {
+  let sum = 0;
+  [...body].reverse().forEach((c, i) => { let d = +c; if (i % 2 === 0) { d *= 2; if (d > 9) d -= 9; } sum += d; });
+  return body + ((10 - (sum % 10)) % 10);
+};
+const CARD = luhn('622202100112345');
+
+test('十六进制校验和里的数字串、包名里的 .internal 段不误报；真卡号与内网主机名照报', () => {
+  const host = 'build01' + '.corp';
+  const { dir } = repo({
+    'Cargo.lock': `checksum = "93${'ab'}${CARD}f8b2ff13f34540b44e946ef35111825727b38d33286ef9861"\n`,
+    'Layout.kt': 'package top.wcpe.allincore.layout.engine.internal.taffy\n' +
+      'import top.wcpe.allincore.layout.engine.internal.taffy.Node\n' +
+      'package com.acme.internal/* 内部包 */\n' +
+      'import /* 工具 */ com.acme.some_module.app.internal\n' +
+      'import /* a */ /* b */ com.acme.tools.internal\n' +
+      'val n = top.wcpe.allincore.layout.engine.internal.taffy.Node()\n',
+    'main.go': `import "git.${'corp'}//team/pkg"\n`,
+    'app.js': `import settings from './config.local'\n`,
+    'api.json': `{"url": "http:\\/\\/api.${'corp'}\\/v1"}\n`,
+    'Url.kt': `import foo.Bar // 镜像 http://mirror.${'corp'}//repo\n`,
+    'ids.txt': `id = 0f8fad5b-d9cb-469f-a165-a${'13812345678'}\nrecord = { "owner": "someone", "trace": "0f8fad5b-d9cb-469f-a165-a${'13812345678'}" }\n`,
+    'real.txt': `card = ${CARD}\nhost = ${host}\ntel = 1${'3812345678'}ext.12\n`,
+  });
+  try {
+    const { d } = json(dir, '--mode', 'worktree');
+    assert.deepEqual(d.findings.map((f) => `${f.path}:${f.rule}`).sort(), ['Url.kt:internal-hostname', 'api.json:internal-hostname', 'main.go:internal-hostname', 'real.txt:bank-card', 'real.txt:cn-mobile', 'real.txt:internal-hostname']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('已豁免项在报告里逐条列出规则、位置与理由', () => {
+  const { dir } = repo({
+    'a.txt': `k = ${AWS}\n`,
+    '.privacy-guard.json': JSON.stringify({ allow: [{ rule: 'aws-access-key-id', path: 'a.txt', reason: '文档示例' }] }),
+  });
+  try {
+    const { r, d } = json(dir, '--mode', 'worktree');
+    assert.equal(r.status, 0);
+    assert.deepEqual(d.suppressed_items.map((f) => [f.kind, f.rule, f.path, f.line]), [['config', 'aws-access-key-id', 'a.txt', 1]]);
+    assert.match(d.suppressed_items[0].reason, /文档示例/);
+    const md = scan(dir, '--mode', 'worktree', '--format', 'md').stdout;
+    assert.match(md, /## 已豁免/);
+    assert.match(md, /文档示例/);
+    assert.ok(!md.includes(AWS) && !r.stdout.includes(AWS), '豁免明细也不能落明文');
+    const many = repo({ 'a.txt': Array.from({ length: 205 }, () => `k = ${AWS} # privacy-guard:allow`).join('\n') + '\n' });
+    try {
+      const m = scan(many.dir, '--mode', 'worktree', '--format', 'md').stdout;
+      assert.match(m, /另有 5 条豁免未列出/, 'Markdown 豁免明细有条数上限');
+    } finally { rmSync(many.dir, { recursive: true, force: true }); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('历史与区间扫描里的行内豁免明细带提交号', () => {
+  const { dir, git } = repo({ 'a.txt': 'x\n' });
+  try {
+    git('add', '-A'); git('commit', '-qm', 'base');
+    writeFileSync(path.join(dir, 'b.txt'), `k = ${AWS} # privacy-guard:allow\n`);
+    git('add', '-A'); git('commit', '-qm', 'add');
+    const sha = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+    for (const extra of [['--mode', 'history'], ['--since', 'HEAD~1']]) {
+      const { d } = json(dir, ...extra);
+      const item = d.suppressed_items.find((f) => f.kind === 'inline');
+      assert.ok(item, extra.join(' '));
+      assert.ok(item.commit && (item.commit.startsWith(sha) || sha.startsWith(item.commit)), `${extra.join(' ')} 带提交号：${item.commit}`);
+    }
+    const h = json(dir, '--mode', 'history').d.suppressed_items.find((f) => f.kind === 'inline');
+    assert.match(h.path, /^\[history\] /);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('fail_on 取值非法是配置错误（退出码 3）', () => {
   const { dir } = repo({ '.privacy-guard.json': JSON.stringify({ fail_on: 'high' }) });
   try {

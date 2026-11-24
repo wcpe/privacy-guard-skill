@@ -45,7 +45,7 @@ python skills/privacy-guard/scripts/scan.py --mode worktree --format sarif --out
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/wcpe/privacy-guard-skill
-    rev: v0.4.0        # 或某个提交 SHA
+    rev: v0.4.1        # 或某个提交 SHA
     hooks:
       - id: privacy-guard
 ```

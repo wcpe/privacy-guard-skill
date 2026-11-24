@@ -88,6 +88,27 @@ def _is_datetime14(num):
             and h <= 23 and mi <= 59 and s <= 59)
 
 
+def _in_hex_run(m):
+    """命中的数字串只是一段长十六进制串（sha256 / sha1 / md5 校验和、哈希）的一部分。
+    如 Cargo.lock 的 checksum = "9330f8b2ff13f345…"，其中的连续数字子串会偶然通过 Luhn / 身份证校验。
+    要求所在的连续 [0-9a-f] 串至少 20 位，避免把 `13812345678ext.123` 这类紧跟字母的真号码误放。"""
+    s, a, b = m.string, m.start(), m.end()
+    while a > 0 and s[a - 1] in "0123456789abcdefABCDEF":
+        a -= 1
+    while b < len(s) and s[b] in "0123456789abcdefABCDEF":
+        b += 1
+    if b - a >= 20 and b - a > m.end() - m.start():
+        return True
+    # UUID 每组最长只有 12 位，单看连续十六进制串不够长，按 UUID 整体形状判断
+    # 只在命中附近 36 字符窗口内找，避免长行里每个候选都全行搜索
+    lo = max(0, m.start() - 36)
+    win = s[lo:m.end() + 36]
+    return any(lo + u.start() <= m.start() and m.end() <= lo + u.end() for u in _UUID_RE.finditer(win))
+
+
+_UUID_RE = re.compile(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}")
+
+
 def bank_card_valid(m):
     """银行卡校验：Luhn 通过，且排除两类高频「数字串」误报 ——
     ① 浮点小数尾数：命中串紧邻前缀为 `<数字>.`（如 Prometheus 指标 20.00242334472774 的小数部分）；
@@ -96,10 +117,40 @@ def bank_card_valid(m):
     num = m.group(0)
     if not luhn_valid(num):
         return False
+    if _in_hex_run(m):
+        return False
     if _is_datetime14(num):
         return False
     if re.search(r"\d\.$", m.string[:m.start()]):
         return False
+    return True
+
+
+# 反向域名式包名的首段（top.wcpe.xxx / com.example.xxx），真实主机名不会以这些顶级域开头
+_REVERSE_DOMAIN_HEADS = {"com", "org", "net", "io", "top", "cn", "dev", "me", "edu", "gov", "co", "xyz",
+                         "app", "info", "biz", "uk", "de", "jp", "fr", "ru", "us", "eu", "tech", "site"}
+
+
+def internal_host_valid(m):
+    """内网主机名校验：排除 Java/Kotlin 包名与 import 里恰好含 .internal / .local 段的点分路径。
+    ⓪ 命中前是单个 `/`（文件路径段）；① 命中正是 package / import 关键字后的包名本身，且后面不接 `/` 或 `:`（接了就是 Go 模块路径 / URL 里的真主机名）；② 命中后还接着 `.标识符`（internal 只是中间段，不是顶级域）且首段是常见顶级域
+    （反向域名包名）或后续段含大写（类名）。"""
+    line = m.string
+    # 前面是单个 `/`（如 './config.local'、src/app.local.json）是文件路径段，不是主机名；`//` 后才可能是 URL 主机
+    # JSON 里转义的 `\/` 仍是 URL 分隔，不当作路径段
+    if line[m.start() - 1:m.start()] == "/" and line[m.start() - 2:m.start() - 1] not in ("/", "\\"):
+        return False
+    # 只豁免紧跟在 package / import 关键字后面的那个点分包名本身；同行注释或引号里的 URL 照常检查
+    kw = re.match(r"\s*(?:package|import)\s+(?:/\*(?:[^*]|\*(?!/))*\*/\s*)*(?:static\s+)?([\w.]+)", line)
+    nxt = line[m.end():m.end() + 2]
+    as_path = nxt[:1] == ":" or (nxt[:1] == "/" and nxt not in ("/*", "//"))  # `//`、`/*` 是注释不是路径
+    if kw and kw.start(1) <= m.start() and m.end() <= kw.end(1) and not as_path:
+        return False
+    rest = re.match(r"\.([A-Za-z_][\w.]*)", line[m.end():])
+    if rest:
+        head = m.group(0).split(".", 1)[0]
+        if head in _REVERSE_DOMAIN_HEADS or re.search(r"[A-Z]", rest.group(1)):
+            return False
     return True
 
 
@@ -231,10 +282,11 @@ CONTENT_RULES = [
 
     # —— 类别 2：个人身份信息(PII) ——
     _rule("cn-mobile", CAT2, SEV_MAJOR,
-          r"(?<!\d)1[3-9]\d{9}(?!\d)", r"1[3-9]\d{9}"),
+          r"(?<!\d)1[3-9]\d{9}(?!\d)", r"1[3-9]\d{9}",
+          validator=lambda m: not _in_hex_run(m)),
     _rule("cn-id-card", CAT2, SEV_CRIT,
           r"(?<!\d)\d{17}[\dXx](?!\d)", r"\d{17}[\dXx]",
-          validator=lambda m: cn_id_valid(m.group(0))),
+          validator=lambda m: cn_id_valid(m.group(0)) and not _in_hex_run(m)),
     _rule("bank-card", CAT2, SEV_CRIT,
           r"(?<!\d)\d{13,19}(?!\d)", r"\d{13,19}",
           validator=bank_card_valid),
@@ -250,7 +302,8 @@ CONTENT_RULES = [
           validator=lambda m: m.group(0) not in ("10.0.0.0", "192.168.0.0")),
     _rule("internal-hostname", CAT3, SEV_MAJOR,
           r"\b[a-z0-9][a-z0-9.-]*\.(?:corp|internal|intra|lan|local)\b(?!host)",
-          r"\.(?:corp|internal|intra|lan|local)"),
+          r"\.(?:corp|internal|intra|lan|local)",
+          validator=internal_host_valid),
     _rule("mac-address", CAT3, SEV_MINOR,
           r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b",
           r"(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}",
@@ -292,6 +345,16 @@ FILENAME_RULES = [
 INLINE_ALLOW_RE = re.compile(r"privacy-guard:allow\b(?:[ \t]+([a-z0-9][a-z0-9,_-]*))?")
 # 被豁免 / 基线接纳的数量，写进报告，豁免不悄悄发生
 SUPPRESSED = {"inline": 0, "config": 0, "baseline": 0}
+# 豁免明细（已打码），报告里单列「已豁免」，便于审计每一条豁免
+SUPPRESSED_ITEMS = []
+# Markdown 报告最多列出的豁免条数（钩子把报告塞进提示与输出缓冲区，不能无限长）
+MAX_SUPPRESSED_ROWS = 200
+
+
+def _suppress(kind, f, reason=""):
+    SUPPRESSED[kind] += 1
+    SUPPRESSED_ITEMS.append({"kind": kind, "rule": f["rule"], "path": f["path"], "line": f.get("line", 0),
+                             "commit": f.get("commit", ""), "match": f["match"], "reason": reason})
 
 
 def fingerprint(rule_id, secret):
@@ -313,14 +376,15 @@ def classify_line(path, lineno, line):
             secret = m.group(rule["group"]) or m.group(0)
             if PLACEHOLDER_RE.fullmatch(secret.strip().strip("'\"")):
                 continue
-            if inline and (inline_rules is None or rule["id"] in inline_rules):
-                SUPPRESSED["inline"] += 1
-                continue
-            out.append({
+            f = {
                 "rule": rule["id"], "category": rule["cat"], "severity": rule["sev"],
                 "path": path, "line": lineno, "match": mask(secret),
                 "fingerprint": fingerprint(rule["id"], secret.strip()),
-            })
+            }
+            if inline and (inline_rules is None or rule["id"] in inline_rules):
+                _suppress("inline", f, "行内 privacy-guard:allow")
+                continue
+            out.append(f)
     return out
 
 
@@ -431,11 +495,13 @@ def scan_history(root):
             continue
         text = raw.decode("utf-8", "replace")
         hits = []
+        sup_from = len(SUPPRESSED_ITEMS)
         for i, line in enumerate(text.splitlines(), 1):
             hits += classify_line(rel, i, line)
-        if hits:
+        if hits or len(SUPPRESSED_ITEMS) > sup_from:
             commit = _history_commit_for_blob(root, sha)
-            for h in hits:
+            # 行内豁免明细同样标上 [history] 与提交号，便于审计
+            for h in hits + SUPPRESSED_ITEMS[sup_from:]:
                 h["path"] = "[history] %s" % rel
                 h["commit"] = commit
             findings += hits
@@ -514,9 +580,12 @@ def scan_range(root, since, until="HEAD"):
             lineno = int(m.group(1)) if m else 0
         elif cur and len(ln) >= width and ln[:width].strip("+ ") == "" and "+" in ln[:width]:
             if ln[:width] == "+" * width:
+                sup_from = len(SUPPRESSED_ITEMS)
                 for f in classify_line(cur, lineno, ln[width:]):
                     f["commit"] = commit
                     findings.append(f)
+                for f in SUPPRESSED_ITEMS[sup_from:]:
+                    f["commit"] = commit
             lineno += 1
     return findings, True
 
@@ -593,8 +662,15 @@ def apply_config(findings, cfg):
     sev = cfg.get("severity") or {}
     out = []
     for f in findings:
-        if sev.get(f["rule"]) == "off" or (ignore and _glob_hit(f["path"], ignore)) or any(_allow_hit(f, a) for a in allow):
-            SUPPRESSED["config"] += 1
+        if sev.get(f["rule"]) == "off":
+            _suppress("config", f, "severity: off")
+            continue
+        if ignore and _glob_hit(f["path"], ignore):
+            _suppress("config", f, "ignore_paths")
+            continue
+        hit = next((a for a in allow if _allow_hit(f, a)), None)
+        if hit is not None:
+            _suppress("config", f, "allow：" + str(hit.get("reason", "")))
             continue
         if f["rule"] in sev:
             f["severity"] = sev[f["rule"]]
@@ -713,6 +789,20 @@ def build_report(findings, scope):
             lines.append("| %d | %s %s | %s | `%s` | %s | `%s` |"
                          % (i, SEV_ICON[f["severity"]], SEV_NAME[f["severity"]],
                             f["category"], f["rule"], loc, f["match"]))
+    if SUPPRESSED_ITEMS:
+        lines += ["", "## 已豁免（不计入统计，供审计）", "",
+                  "| # | 方式 | 规则 | 位置 | 打码片段 | 理由 |", "|---|---|---|---|---|---|"]
+        for i, f in enumerate(SUPPRESSED_ITEMS[:MAX_SUPPRESSED_ROWS], 1):
+            loc = f["path"] + (":%d" % f["line"] if f.get("line") else "")
+            if f.get("commit"):
+                loc += " @ " + f["commit"]
+            reason = f["reason"].replace("|", "\\|").replace("\n", " ")
+            lines.append("| %d | %s | `%s` | %s | `%s` | %s |"
+                         % (i, f["kind"], f["rule"], loc, f["match"], reason))
+        if len(SUPPRESSED_ITEMS) > MAX_SUPPRESSED_ROWS:
+            lines.append("")
+            lines.append("> 另有 %d 条豁免未列出，完整明细见 `--format json` 的 `suppressed_items`。"
+                         % (len(SUPPRESSED_ITEMS) - MAX_SUPPRESSED_ROWS))
     return "\n".join(lines) + "\n", counts, findings
 
 
@@ -777,8 +867,12 @@ def main():
         sys.stdout.write("[privacy-guard] 已把 %d 项命中写入基线 %s（只含指纹、规则与路径）\n" % (n, args.write_baseline))
         sys.exit(0)
     if known:
-        kept = [f for f in findings if f.get("fingerprint") not in known]
-        SUPPRESSED["baseline"] += len(findings) - len(kept)
+        kept = []
+        for f in findings:
+            if f.get("fingerprint") in known:
+                _suppress("baseline", f, "基线已接纳")
+            else:
+                kept.append(f)
         findings = kept
 
     scope = mode + (" %s..%s" % (args.since, args.until) if mode == "range" else "")
@@ -796,7 +890,8 @@ def main():
     if args.format in ("md", "both"):
         emit(".md", report)
     if args.format in ("json", "both"):
-        payload = {"scope": scope, "counts": counts, "suppressed": dict(SUPPRESSED), "fail_on": fail_on,
+        payload = {"scope": scope, "counts": counts, "suppressed": dict(SUPPRESSED),
+                   "suppressed_items": SUPPRESSED_ITEMS, "fail_on": fail_on,
                    "findings": findings}
         text = json.dumps(payload, ensure_ascii=False, indent=2)
         if args.out:

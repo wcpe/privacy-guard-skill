@@ -38,7 +38,12 @@ process.stdin.on('end', function () {
   const critical = []
   const major = []
   repos.forEach(function (cwd) {
-    const r = spawnSync(py, [scan, '--mode', 'staged', '--path', cwd, '--format', 'md'], { encoding: 'utf8' })
+    const r = spawnSync(py, [scan, '--mode', 'staged', '--path', cwd, '--format', 'md'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+    // 报告大到撑爆缓冲区时子进程已被杀、拿不到退出码：不能当作「引擎跑不起来」放行，按拦截处理
+    if (r.error && r.error.code === 'ENOBUFS') {
+      critical.push((repos.length > 1 ? '仓库 ' + cwd + '：\n' : '') + '扫描报告过大（超出 64MB 输出缓冲），无法确认暂存区是否安全；请先在终端运行 scan.py --mode staged 查看。')
+      return
+    }
     if (r.error || typeof r.status !== 'number') return // 引擎跑不起来不阻断
     const report = (repos.length > 1 ? '仓库 ' + cwd + '：\n' : '') + (r.stdout || '').trim()
     if (r.status === 2) critical.push(report)
@@ -47,7 +52,7 @@ process.stdin.on('end', function () {
 
   if (critical.length) {
     const reason = '[privacy-guard] ⛔ 暂存区检测到致命敏感数据(critical)，已拦下本次提交：\n\n' + critical.join('\n\n') +
-      '\n\n请移除 / 脱敏后重新提交。确属误报时可 `git commit --no-verify` 跳过（自负其责）并补白名单。'
+      '\n\n请移除 / 脱敏后重新提交。确属误报时，在项目根 `.privacy-guard.json` 的 `allow` 里按规则 + 路径（或指纹）登记并写明 reason；内容命中也可在该行加 `privacy-guard:allow <规则>`（文件名命中只能用 allow）。然后照常提交，不必用 --no-verify。'
     // decision:block 给 Devin / Claude，hookSpecificOutput.permissionDecision=deny 给 Codex / 新版 Claude
     process.stdout.write(JSON.stringify({
       decision: 'block',
