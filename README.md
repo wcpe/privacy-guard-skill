@@ -1,6 +1,6 @@
 # Privacy Guard
 
-一个「隐私 / 敏感数据检测」AI 编码技能：扫描**当前项目工作区**与 **git 全量历史**，找出被硬编码进去的敏感数据，按**五大类**分级、**脱敏**报告，并给出**按类修复指引**。同一套 `SKILL.md` 通用于 **Claude Code**（插件一键装）、**OpenAI Codex** 与 **opencode**。
+一个「隐私 / 敏感数据检测」AI 编码技能：扫描**当前项目工作区**与 **git 全量历史**，找出被硬编码进去的敏感数据，按**五大类**分级、**脱敏**报告，并给出**按类修复指引**。同一套 `SKILL.md` 通用于 **Claude Code**（插件一键装）、**Devin**（插件一键装）、**OpenAI Codex** 与 **opencode**。
 
 **只检测、只报告、给指引——绝不替你改写 git 历史、force-push 或吊销密钥**（这些不可逆、牵动远端与团队的操作，交由你知情后亲自执行）。
 
@@ -53,6 +53,14 @@ python skills/privacy-guard/scripts/scan.py --mode all --path . --out .tmp/priva
 
 CLI 等价：`claude plugin marketplace add wcpe/claude-plugins` / `claude plugin install privacy-guard@wcpe`。
 
+### Devin（插件）
+
+在 Devin 的插件设置里从 GitHub 安装 `https://github.com/wcpe/privacy-guard-skill/tree/master`（个人或组织范围均可；只填仓库地址可能停在旧提交），或在 Devin CLI 里 `devin plugins install wcpe/privacy-guard-skill`。装好后对新会话生效：
+
+- 技能以 `/privacy-guard:privacy-guard [worktree|staged|history|all] [项目路径]` 调用；Claude 的 `commands/` 斜杠命令在 Devin 下不加载，用技能参数代替。
+- 清单 `.devin-plugin/plugin.json` 内联声明 MCP `privacy_scan`（Devin 下以插件目录为工作目录启动，因此调用时请传 `path`）；根目录 `hooks.json` 是 Devin 提交门，匹配 `exec` 工具里的 `git commit`，按 `DEVIN_PLUGIN_ROOT` 定位插件、自己查找 node 与 python。
+- Devin 会按 Claude 兼容顺带读 `hooks/hooks.json`，启动器 `hooks/run-hook.sh` 在 Devin 下自动跳过它，提交门不会跑两遍。
+
 ### OpenAI Codex
 
 Codex 原生认 `SKILL.md`。最稳的装法是把技能放进 Codex 的技能目录（无需清单）：
@@ -83,10 +91,15 @@ cp -r privacy-guard-skill/skills/* ~/.config/opencode/skills/   # 全局
 privacy-guard-skill/                 ← 仓库根 = 插件本体（分发经 wcpe 组织市场 wcpe/claude-plugins）
 ├── .claude-plugin/plugin.json       Claude Code 插件清单
 ├── .codex-plugin/plugin.json        Codex 插件清单（skills 指向 ./skills/）
-├── .mcp.json                        MCP server 注册
+├── .devin-plugin/plugin.json        Devin 插件清单（内联 MCP；hook 见根目录 hooks.json）
+├── .mcp.json                        MCP server 注册（Claude Code）
+├── hooks.json                       Devin 提交门 hook（匹配 exec）
 ├── hooks/                           提交门护栏（Node 胶水 → scan.py）
-│   ├── hooks.json
+│   ├── hooks.json                   Claude Code 提交门 hook（匹配 Bash）
+│   ├── run-hook.sh                  跨宿主启动器：自找 node，Devin 下跳过 Claude 配置
+│   ├── find-python.cjs              hook 与 MCP 共用的 python 查找
 │   └── guard-commit.js
+├── tests/                           hook / MCP 行为测试（node --test tests/）
 ├── commands/                        斜杠命令 /privacy-scan* 与 /privacy-install-hook
 ├── mcp/privacy-mcp.mjs              MCP：privacy_scan(path, mode)
 └── skills/

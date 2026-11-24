@@ -1,6 +1,7 @@
 ---
 name: privacy-guard
 description: 检测当前项目工作区与 git 历史中是否硬编码了隐私/敏感数据(凭证密钥、PII、内网架构、环境元数据、敏感文件)时使用。当用户说"扫一下有没有泄露密钥/隐私、提交前查敏感信息、检查 git 历史有没有密码、有没有硬编码 token/身份证/内网IP、开源/交付前脱敏自查、防止把 .env/私钥提交上去、装个提交前拦截钩子防泄密、secret scanning、敏感信息检测"时触发——即使没明说"隐私扫描"。捆绑 rg+Python 检测引擎(正则+熵值+Luhn/身份证校验+白名单降误报),扫工作区与全量 git 历史,产出**脱敏**分级报告 + 按类修复指引(含历史清除与密钥轮换),可选安装 pre-commit 拦截钩子。**只检测、只报告、给指引——绝不自动改写历史或吊销密钥**。
+argument-hint: "[worktree|staged|history|all] [项目路径]"
 ---
 
 # 隐私数据检测（privacy-guard）
@@ -42,7 +43,7 @@ description: 检测当前项目工作区与 git 历史中是否硬编码了隐�
 
 ### 2. 跑检测引擎
 
-引擎是 `scripts/scan.py`（纯 Python；有 `rg` 时自动用它加速文件预筛，无则全量遍历——结果一致只是更慢）。Claude Code 下绝对寻址用 `${CLAUDE_PLUGIN_ROOT}/skills/privacy-guard/scripts/scan.py`；Codex / 其他工具用技能目录内的 `scripts/scan.py`。
+引擎是 `scripts/scan.py`（纯 Python；有 `rg` 时自动用它加速文件预筛，无则全量遍历——结果一致只是更慢）。Claude Code 下绝对寻址用 `${CLAUDE_PLUGIN_ROOT}/skills/privacy-guard/scripts/scan.py`；Devin / Codex / 其他工具用技能目录内的 `scripts/scan.py`（Devin 的技能列表会给出 SKILL.md 的绝对路径，同目录下即是）。
 
 ```bash
 # 扫当前项目（工作区+历史），报告写到 .tmp/（不入库）

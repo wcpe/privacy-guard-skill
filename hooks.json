@@ -1,0 +1,13 @@
+{
+  "PreToolUse": [
+    {
+      "matcher": "^exec$",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "r=\"${DEVIN_PLUGIN_ROOT:-${PLUGIN_ROOT:-$CLAUDE_PLUGIN_ROOT}}\"; f=\"$r/hooks/run-hook.sh\"; if [ -n \"$r\" ] && [ -f \"$f\" ]; then sh \"$f\" --host devin guard-commit.js; fi"
+        }
+      ]
+    }
+  ]
+}

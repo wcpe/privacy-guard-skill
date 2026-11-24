@@ -4,7 +4,10 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/guard-commit.js\"" }
+          {
+            "type": "command",
+            "command": "f=\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.sh\"; if [ -f \"$f\" ]; then sh \"$f\" --host claude guard-commit.js; fi"
+          }
         ]
       }
     ]
