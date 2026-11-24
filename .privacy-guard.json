@@ -1,0 +1,30 @@
+{
+  "ignore_paths": [],
+  "allow": [
+    {
+      "path": "skills/privacy-guard/references/patterns.md",
+      "reason": "规则清单文档，示例片段即检测对象本身"
+    },
+    {
+      "path": "skills/privacy-guard/scripts/scan.py",
+      "reason": "检测引擎源码里的规则正则与示例注释"
+    },
+    {
+      "path": [
+        "README.md",
+        "skills/privacy-guard/SKILL.md"
+      ],
+      "rule": "local-user-path",
+      "reason": "文档里的示例路径"
+    },
+    {
+      "path": "hooks/guard-commit.js",
+      "rule": "smb-share-path",
+      "reason": "正则字面量里的转义反斜杠"
+    },
+    {
+      "path": "tests/**",
+      "reason": "测试用例里拼接构造的假凭证与示例地址"
+    }
+  ]
+}

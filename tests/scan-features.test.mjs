@@ -1,0 +1,138 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync, execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const SCAN = path.join(repoRoot, 'skills', 'privacy-guard', 'scripts', 'scan.py');
+// 拼接出的假凭证，避免测试源码本身被扫描器命中
+const AWS = 'AKIA' + 'Q3EXAMPLE7ZK4NB2';
+const GLPAT = 'glp' + 'at-' + 'Zx8Kq2Lm9Np4Rs7Tv1Wy';
+const NPM = 'npm' + '_' + 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8';
+
+function repo(files) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'pg-scan-'));
+  const git = (...a) => execFileSync('git', a, { cwd: dir, stdio: 'ignore' });
+  git('init', '-q'); git('config', 'user.email', 't@t'); git('config', 'user.name', 't');
+  for (const [f, c] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+    writeFileSync(path.join(dir, f), c);
+  }
+  return { dir, git };
+}
+const scan = (dir, ...a) => spawnSync('python3', [SCAN, '--path', dir, ...a], { encoding: 'utf8' });
+const json = (dir, ...a) => { const r = scan(dir, '--format', 'json', ...a); return { r, d: JSON.parse(r.stdout) }; };
+
+test('新增凭证规则命中且打码', () => {
+  const { dir } = repo({ 'a.txt': `gl = ${GLPAT}\nnpm = ${NPM}\n` });
+  try {
+    const { r, d } = json(dir, '--mode', 'worktree');
+    assert.equal(r.status, 2);
+    assert.deepEqual(d.findings.map((f) => f.rule).sort(), ['gitlab-token', 'npm-token']);
+    assert.ok(!r.stdout.includes(GLPAT) && !r.stdout.includes(NPM), '不能落明文');
+    assert.ok(d.findings.every((f) => /^[0-9a-f]{16}$/.test(f.fingerprint)));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('行内豁免、配置 allow / ignore_paths / severity 生效且计入豁免数', () => {
+  const { dir } = repo({
+    'a.txt': `k1 = ${AWS} # privacy-guard:allow aws-access-key-id\nk2 = ${AWS} # privacy-guard:allow email\n`,
+    'fixtures/b.txt': `k = ${AWS}\n`,
+    'c.txt': 'ip = 10.1.2.3\n',
+    '.privacy-guard.json': JSON.stringify({
+      ignore_paths: ['fixtures/**'],
+      severity: { 'private-ipv4': 'off' },
+    }),
+  });
+  try {
+    const { d } = json(dir, '--mode', 'worktree');
+    assert.deepEqual(d.findings.map((f) => `${f.path}:${f.line}`), ['a.txt:2'], '只豁免指定规则');
+    assert.equal(d.suppressed.inline, 1);
+    assert.equal(d.suppressed.config, 2);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('allow 缺 reason 是配置错误（退出码 3）', () => {
+  const { dir } = repo({ '.privacy-guard.json': JSON.stringify({ allow: [{ rule: 'email' }] }) });
+  try {
+    const r = scan(dir, '--mode', 'worktree');
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /reason/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('基线：写入后只报新增，基线文件不含明文', () => {
+  const { dir } = repo({
+    'old.txt': `k = ${AWS}\n`,
+    '.privacy-guard.json': JSON.stringify({ baseline: '.privacy-guard-baseline.json' }),
+  });
+  try {
+    assert.equal(scan(dir, '--mode', 'worktree', '--write-baseline', path.join(dir, '.privacy-guard-baseline.json')).status, 0);
+    const base = readFileSync(path.join(dir, '.privacy-guard-baseline.json'), 'utf8');
+    assert.ok(!base.includes(AWS));
+    const clean = json(dir, '--mode', 'worktree');
+    assert.equal(clean.r.status, 0);
+    assert.equal(clean.d.suppressed.baseline, 1);
+    writeFileSync(path.join(dir, 'new.txt'), `t = ${GLPAT}\n`);
+    const again = json(dir, '--mode', 'worktree');
+    assert.deepEqual(again.d.findings.map((f) => f.path), ['new.txt']);
+    assert.equal(json(dir, '--mode', 'worktree', '--no-baseline').d.findings.length, 2);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('--since 只扫区间新增并带提交；无效 ref 退出码 3', () => {
+  const { dir, git } = repo({ 'old.txt': `k = ${AWS}\n` });
+  try {
+    git('add', '.'); git('commit', '-qm', 'old'); git('tag', 'v1');
+    writeFileSync(path.join(dir, 'new.txt'), `t = ${GLPAT}\n`);
+    writeFileSync(path.join(dir, '.env'), 'X=1\n');
+    git('add', '.'); git('commit', '-qm', 'feat: new');
+    const { r, d } = json(dir, '--since', 'v1');
+    assert.equal(r.status, 2);
+    assert.deepEqual(d.findings.map((f) => f.rule).sort(), ['dotenv-file', 'gitlab-token']);
+    assert.ok(d.findings.every((f) => /feat: new/.test(f.commit)));
+    assert.equal(scan(dir, '--since', 'no-such-ref').status, 3);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('--fail-on 门槛与 SARIF 输出', () => {
+  const { dir } = repo({ 'a.txt': 'host = db.corp\n' });
+  try {
+    assert.equal(scan(dir, '--mode', 'worktree', '--format', 'md').status, 1);
+    assert.equal(scan(dir, '--mode', 'worktree', '--format', 'md', '--fail-on', 'critical').status, 0);
+    const r = scan(dir, '--mode', 'worktree', '--format', 'sarif', '--fail-on', 'never');
+    assert.equal(r.status, 0);
+    const s = JSON.parse(r.stdout);
+    assert.equal(s.version, '2.1.0');
+    const res = s.runs[0].results[0];
+    assert.equal(res.ruleId, 'internal-hostname');
+    assert.equal(res.level, 'warning');
+    assert.equal(res.locations[0].physicalLocation.region.startLine, 1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('install_hook.py：装进 core.hooksPath，已有他人钩子时不覆盖', () => {
+  const { dir, git } = repo({ 'a.txt': `k = ${AWS}\n` });
+  try {
+    git('config', 'core.hooksPath', '.husky');
+    mkdirSync(path.join(dir, '.husky'));
+    writeFileSync(path.join(dir, '.husky', 'pre-commit'), '#!/bin/sh\necho other\n');
+    const r = spawnSync('python3', [path.join(repoRoot, 'skills', 'privacy-guard', 'scripts', 'install_hook.py'), '--path', dir], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(existsSync(path.join(dir, '.husky', 'pre-commit.privacy-guard')));
+    assert.ok(existsSync(path.join(dir, '.husky', 'privacy_scan.py')));
+    assert.match(readFileSync(path.join(dir, '.husky', 'pre-commit'), 'utf8'), /echo other/);
+    git('config', '--unset', 'core.hooksPath');
+    spawnSync('python3', [path.join(repoRoot, 'skills', 'privacy-guard', 'scripts', 'install_hook.py'), '--path', dir]);
+    git('add', 'a.txt');
+    const c = spawnSync('git', ['commit', '-qm', 'x'], { cwd: dir, encoding: 'utf8' });
+    assert.notEqual(c.status, 0, '装好的钩子要拦下 critical 提交');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('仓库自扫在自身 .privacy-guard.json 下干净', () => {
+  assert.equal(scan(repoRoot, '--mode', 'worktree', '--format', 'md').status, 0);
+});

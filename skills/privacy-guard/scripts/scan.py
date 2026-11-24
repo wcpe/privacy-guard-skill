@@ -17,6 +17,8 @@
 """
 
 import argparse
+import fnmatch
+import hashlib
 import json
 import math
 import os
@@ -179,6 +181,35 @@ CONTENT_RULES = [
           r"\b(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{16,}\b", r"(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{16,}"),
     _rule("aliyun-access-key", CAT1, SEV_CRIT,
           r"\bLTAI[0-9A-Za-z]{12,22}\b", r"LTAI[0-9A-Za-z]{12,22}"),
+    _rule("tencent-secret-id", CAT1, SEV_CRIT,
+          r"\bAKID[0-9A-Za-z]{32}\b", r"AKID[0-9A-Za-z]{32}"),
+    _rule("openai-api-key", CAT1, SEV_CRIT,
+          r"\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{40,}|\bsk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}\b",
+          r"sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{40,}|sk-[A-Za-z0-9]{20}T3BlbkFJ"),
+    _rule("anthropic-api-key", CAT1, SEV_CRIT,
+          r"\bsk-ant-(?:api|admin)\d{2}-[A-Za-z0-9_-]{80,}", r"sk-ant-(?:api|admin)\d{2}-"),
+    _rule("gitlab-token", CAT1, SEV_CRIT,
+          r"\bgl(?:pat|dt|rt|ptt)-[A-Za-z0-9_-]{20,}\b", r"gl(?:pat|dt|rt|ptt)-[A-Za-z0-9_-]{20,}"),
+    _rule("npm-token", CAT1, SEV_CRIT,
+          r"\bnpm_[A-Za-z0-9]{36}\b", r"npm_[A-Za-z0-9]{36}"),
+    _rule("pypi-token", CAT1, SEV_CRIT,
+          r"\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}", r"pypi-AgEIcHlwaS5vcmc"),
+    _rule("sendgrid-api-key", CAT1, SEV_CRIT,
+          r"\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b", r"SG\.[A-Za-z0-9_-]{22}\."),
+    _rule("telegram-bot-token", CAT1, SEV_CRIT,
+          r"(?<!\d)\d{8,10}:AA[0-9A-Za-z_-]{33}(?![0-9A-Za-z_-])", r"\d{8,10}:AA[0-9A-Za-z_-]{33}"),
+    _rule("discord-bot-token", CAT1, SEV_MAJOR,
+          r"\b[MN][A-Za-z0-9]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b",
+          r"[MN][A-Za-z0-9]{23,25}\.[A-Za-z0-9_-]{6}\."),
+    _rule("azure-storage-key", CAT1, SEV_CRIT,
+          r"(?i)AccountKey=([A-Za-z0-9+/]{80,}={0,2})", r"(?i)AccountKey=", group=1),
+    # 群机器人 / Incoming Webhook：拿到 URL 即可冒名发消息
+    _rule("chat-webhook-url", CAT1, SEV_MAJOR,
+          r"https://(?:hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]{20,}"
+          r"|oapi\.dingtalk\.com/robot/send\?access_token=[a-f0-9]{64}"
+          r"|open\.(?:feishu\.cn|larksuite\.com)/open-apis/bot/v2/hook/[0-9a-f-]{36}"
+          r"|qyapi\.weixin\.qq\.com/cgi-bin/webhook/send\?key=[0-9a-f-]{36})",
+          r"hooks\.slack\.com/services/|oapi\.dingtalk\.com/robot/send|/open-apis/bot/v2/hook/|qyapi\.weixin\.qq\.com/cgi-bin/webhook"),
     _rule("jwt-token", CAT1, SEV_MAJOR,
           r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b",
           r"eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
@@ -257,11 +288,24 @@ FILENAME_RULES = [
 ]
 
 
+# 行内豁免：同一行写 `privacy-guard:allow`（全部规则）或 `privacy-guard:allow rule-a,rule-b`（指定规则）
+INLINE_ALLOW_RE = re.compile(r"privacy-guard:allow(?:[ \t]+([a-z0-9][a-z0-9,_-]*))?")
+# 被豁免 / 基线接纳的数量，写进报告，豁免不悄悄发生
+SUPPRESSED = {"inline": 0, "config": 0, "baseline": 0}
+
+
+def fingerprint(rule_id, secret):
+    """命中项指纹：规则 + 明文的 sha256 前 16 位。不含明文，路径无关（文件挪动、历史与工作区同一份密钥指纹相同）。"""
+    return hashlib.sha256(("%s\0%s" % (rule_id, secret)).encode("utf-8", "replace")).hexdigest()[:16]
+
+
 def classify_line(path, lineno, line):
     """对一行文本套用全部内容规则，返回 finding 列表（已打码）。"""
     out = []
     if len(line) > 4000:  # 跳过超长行（多为压缩/编码数据），避免灾难性回溯
         return out
+    inline = INLINE_ALLOW_RE.search(line)
+    inline_rules = set(inline.group(1).split(",")) if inline and inline.group(1) else None
     for rule in CONTENT_RULES:
         for m in rule["precise"].finditer(line):
             if rule["validator"] and not rule["validator"](m):
@@ -269,9 +313,13 @@ def classify_line(path, lineno, line):
             secret = m.group(rule["group"]) or m.group(0)
             if PLACEHOLDER_RE.fullmatch(secret.strip().strip("'\"")):
                 continue
+            if inline and (inline_rules is None or rule["id"] in inline_rules):
+                SUPPRESSED["inline"] += 1
+                continue
             out.append({
                 "rule": rule["id"], "category": rule["cat"], "severity": rule["sev"],
                 "path": path, "line": lineno, "match": mask(secret),
+                "fingerprint": fingerprint(rule["id"], secret.strip()),
             })
     return out
 
@@ -284,7 +332,8 @@ def check_filename(path):
     for rid, cat, sev, rx, extra in FILENAME_RULES:
         if rx.search(norm) and (extra is None or extra(base)):
             out.append({"rule": rid, "category": cat, "severity": sev,
-                        "path": path, "line": 0, "match": base})
+                        "path": path, "line": 0, "match": base,
+                        "fingerprint": fingerprint(rid, _plain_path(norm))})
     return out
 
 
@@ -427,6 +476,181 @@ def scan_staged(root):
     return findings
 
 
+def scan_range(root, since, until="HEAD"):
+    """扫提交区间 since..until 里**新增**的内容（PR / 上个 tag 以来）：只看各提交的新增行与新增/修改的文件名，并标出提交。"""
+    if _git(root, ["rev-parse", "--git-dir"]).returncode != 0:
+        return [], False
+    res = _git(root, ["log", "-p", "--unified=0", "--no-color", "--no-ext-diff", "--no-renames",
+                      "--format=@@privacy-guard-commit %h %s", "%s..%s" % (since, until)])
+    if res.returncode != 0:
+        return [], False
+    findings, commit, cur, lineno = [], "", "(range)", 0
+    for ln in res.stdout.decode("utf-8", "replace").splitlines():
+        if ln.startswith("@@privacy-guard-commit "):
+            commit = ln[len("@@privacy-guard-commit "):]
+        elif ln.startswith("+++ "):
+            cur = ln[6:] if ln.startswith("+++ b/") else None
+            if cur:
+                for f in check_filename(cur):
+                    f["commit"] = commit
+                    findings.append(f)
+        elif ln.startswith("@@"):
+            m = re.search(r"\+(\d+)", ln)
+            lineno = int(m.group(1)) if m else 0
+        elif ln.startswith("+") and cur:
+            for f in classify_line(cur, lineno, ln[1:]):
+                f["commit"] = commit
+                findings.append(f)
+            lineno += 1
+    return findings, True
+
+
+# ── 项目配置（.privacy-guard.json）与基线 ──
+CONFIG_NAME = ".privacy-guard.json"
+SEV_LEVELS = (SEV_CRIT, SEV_MAJOR, SEV_MINOR)
+
+
+class ConfigError(Exception):
+    pass
+
+
+def _plain_path(p):
+    return p.replace("\\", "/").split("] ", 1)[-1] if p.startswith("[") else p.replace("\\", "/")
+
+
+def _glob_hit(path, patterns):
+    path = _plain_path(path)
+    return any(fnmatch.fnmatch(path, g) or fnmatch.fnmatch(path, g.rstrip("/") + "/*") for g in patterns)
+
+
+def load_config(root, explicit=None):
+    """读项目配置；无文件返回空配置。字段：ignore_paths / allow / severity / rules / baseline / fail_on。"""
+    path = explicit or os.path.join(root, CONFIG_NAME)
+    if not os.path.isfile(path):
+        if explicit:
+            raise ConfigError("找不到配置文件：%s" % explicit)
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except ValueError as e:
+        raise ConfigError("%s 不是合法 JSON：%s" % (path, e))
+    if not isinstance(cfg, dict):
+        raise ConfigError("%s 顶层必须是对象" % path)
+    for i, a in enumerate(cfg.get("allow", [])):
+        if not isinstance(a, dict) or not a.get("reason"):
+            raise ConfigError("allow[%d] 必须写 reason（豁免要说明理由）" % i)
+        if not (a.get("rule") or a.get("path") or a.get("fingerprint")):
+            raise ConfigError("allow[%d] 至少要指定 rule / path / fingerprint 之一" % i)
+    for rid, sev in (cfg.get("severity") or {}).items():
+        if sev not in SEV_LEVELS + ("off",):
+            raise ConfigError("severity.%s 只能是 critical/major/minor/off" % rid)
+    for r in cfg.get("rules", []):
+        if not r.get("id") or not r.get("pattern"):
+            raise ConfigError("自定义规则必须有 id 与 pattern")
+        if r.get("severity", SEV_MAJOR) not in SEV_LEVELS:
+            raise ConfigError("规则 %s 的 severity 只能是 critical/major/minor" % r["id"])
+        try:
+            CONTENT_RULES.append(_rule(r["id"], r.get("category", CAT1), r.get("severity", SEV_MAJOR),
+                                       r["pattern"], r.get("prefilter", r["pattern"]), group=int(r.get("group", 0))))
+        except re.error as e:
+            raise ConfigError("规则 %s 的 pattern 无法编译：%s" % (r["id"], e))
+    return cfg
+
+
+def _allow_hit(f, a):
+    rules = a.get("rule")
+    if rules and f["rule"] not in ([rules] if isinstance(rules, str) else rules):
+        return False
+    if a.get("path") and not _glob_hit(f["path"], [a["path"]] if isinstance(a["path"], str) else a["path"]):
+        return False
+    if a.get("fingerprint") and f.get("fingerprint") != a["fingerprint"]:
+        return False
+    return True
+
+
+def apply_config(findings, cfg):
+    ignore = cfg.get("ignore_paths") or []
+    allow = cfg.get("allow") or []
+    sev = cfg.get("severity") or {}
+    out = []
+    for f in findings:
+        if sev.get(f["rule"]) == "off" or (ignore and _glob_hit(f["path"], ignore)) or any(_allow_hit(f, a) for a in allow):
+            SUPPRESSED["config"] += 1
+            continue
+        if f["rule"] in sev:
+            f["severity"] = sev[f["rule"]]
+        out.append(f)
+    return out
+
+
+def load_baseline(path):
+    if not path or not os.path.isfile(path):
+        return set()
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except ValueError as e:
+        raise ConfigError("基线 %s 不是合法 JSON：%s" % (path, e))
+    return {x["fingerprint"] for x in data.get("findings", []) if x.get("fingerprint")}
+
+
+def write_baseline(path, findings):
+    """基线只存指纹与已打码的元数据（不含明文），可以入库。"""
+    items = OrderedDict()
+    for f in sorted(findings, key=lambda x: (x["rule"], _plain_path(x["path"]))):
+        items.setdefault(f["fingerprint"], {"fingerprint": f["fingerprint"], "rule": f["rule"],
+                                             "severity": f["severity"], "path": _plain_path(f["path"]),
+                                             "match": f["match"]})
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"version": 1, "tool": "privacy-guard", "findings": list(items.values())},
+                  fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    return len(items)
+
+
+SARIF_LEVEL = {SEV_CRIT: "error", SEV_MAJOR: "warning", SEV_MINOR: "note"}
+
+
+def build_sarif(findings):
+    """SARIF 2.1.0：可上传 GitHub Code Scanning；片段仍打码，history/range 命中在消息里带提交。"""
+    rules = OrderedDict()
+    results = []
+    for f in findings:
+        rules.setdefault(f["rule"], {"id": f["rule"], "name": f["rule"],
+                                     "shortDescription": {"text": "%s：%s" % (f["category"], f["rule"])},
+                                     "properties": {"tags": ["security", "privacy"]}})
+        loc = {"artifactLocation": {"uri": _plain_path(f["path"])}}
+        if f.get("line"):
+            loc["region"] = {"startLine": f["line"]}
+        msg = "%s %s：%s" % (SEV_NAME[f["severity"]], f["category"], f["match"])
+        if f.get("commit"):
+            msg += "（提交 %s）" % f["commit"]
+        results.append({"ruleId": f["rule"], "level": SARIF_LEVEL[f["severity"]], "message": {"text": msg},
+                        "locations": [{"physicalLocation": loc}],
+                        "partialFingerprints": {"privacyGuard/v1": f.get("fingerprint", "")}})
+    return {"$schema": "https://json.schemastore.org/sarif-2.1.0.json", "version": "2.1.0",
+            "runs": [{"tool": {"driver": {"name": "privacy-guard", "informationUri": "https://github.com/wcpe/privacy-guard-skill",
+                                          "rules": list(rules.values())}},
+                      "results": results}]}
+
+
+def exit_code(counts, fail_on):
+    """2=critical / 1=major（及 fail_on=minor 时的 minor）/ 0；低于 fail_on 门槛的不计。"""
+    if fail_on == "never":
+        return 0
+    if counts[SEV_CRIT]:
+        return 2
+    if counts[SEV_MAJOR] and fail_on in (SEV_MAJOR, SEV_MINOR):
+        return 1
+    if counts[SEV_MINOR] and fail_on == SEV_MINOR:
+        return 1
+    return 0
+
+
 SEV_ORDER = {SEV_CRIT: 0, SEV_MAJOR: 1, SEV_MINOR: 2}
 SEV_ICON = {SEV_CRIT: "🔴", SEV_MAJOR: "🟡", SEV_MINOR: "🟢"}
 SEV_NAME = {SEV_CRIT: "critical", SEV_MAJOR: "major", SEV_MINOR: "minor"}
@@ -459,6 +683,9 @@ def build_report(findings, scope):
                               if counts[SEV_MINOR] else "✅ 未发现敏感数据"))),
              "- 统计：🔴 critical %d · 🟡 major %d · 🟢 minor %d · 合计 %d"
              % (counts[SEV_CRIT], counts[SEV_MAJOR], counts[SEV_MINOR], len(findings)),
+             ] + (["- 已豁免：行内 %d · 配置 %d · 基线接纳 %d（豁免项不计入上面的统计）"
+                   % (SUPPRESSED["inline"], SUPPRESSED["config"], SUPPRESSED["baseline"])]
+                  if any(SUPPRESSED.values()) else []) + [
              "", "> 所有命中片段均已打码；明文请到对应位置核对。本报告应留在 .tmp/ 不要入库。", ""]
     if findings:
         lines += ["| # | 级别 | 类别 | 规则 | 位置 | 打码片段 |", "|---|---|---|---|---|---|"]
@@ -480,45 +707,89 @@ def main():
         except (AttributeError, ValueError):
             pass
     ap = argparse.ArgumentParser(description="隐私/敏感数据检测引擎")
-    ap.add_argument("--mode", choices=["worktree", "history", "staged", "all"],
-                    default="all", help="扫描范围")
+    ap.add_argument("--mode", choices=["worktree", "history", "staged", "range", "all"],
+                    default=None, help="扫描范围（默认 all；给了 --since 时默认 range）")
     ap.add_argument("--path", default=".", help="项目根目录")
-    ap.add_argument("--format", choices=["md", "json", "both"], default="both")
+    ap.add_argument("--since", default=None, help="range 模式起点（tag / 分支 / 提交），扫 since..until 的新增内容")
+    ap.add_argument("--until", default="HEAD", help="range 模式终点，默认 HEAD")
+    ap.add_argument("--format", choices=["md", "json", "both", "sarif"], default="both")
     ap.add_argument("--out", default=None, help="报告输出文件前缀（不含扩展名）")
+    ap.add_argument("--config", default=None, help="项目配置，默认 <项目根>/%s（不存在则忽略）" % CONFIG_NAME)
+    ap.add_argument("--baseline", default=None, help="基线文件：其中的已知命中不再计入（默认取配置里的 baseline）")
+    ap.add_argument("--no-baseline", action="store_true", help="忽略基线，报出全部命中")
+    ap.add_argument("--write-baseline", default=None, metavar="FILE",
+                    help="把本次全部命中写成基线（只含指纹与打码片段）后以 0 退出")
+    ap.add_argument("--fail-on", choices=["critical", "major", "minor", "never"], default=None,
+                    help="从哪一级开始给非 0 退出码（默认 major：critical→2、major→1）")
     args = ap.parse_args()
 
     root = os.path.abspath(args.path)
-    findings, history_ok = [], None
-    if args.mode in ("worktree", "all"):
-        findings += scan_worktree(root)
-    if args.mode in ("history", "all"):
-        hist, history_ok = scan_history(root)
-        findings += hist
-    if args.mode == "staged":
-        findings += scan_staged(root)
+    mode = args.mode or ("range" if args.since else "all")
+    if mode == "range" and not args.since:
+        ap.error("--mode range 需要 --since <ref>")
+    try:
+        cfg = load_config(root, args.config)
+        baseline_path = None if args.no_baseline or args.write_baseline else (args.baseline or cfg.get("baseline"))
+        if baseline_path and not os.path.isabs(baseline_path):
+            baseline_path = os.path.join(root, baseline_path)
+        known = load_baseline(baseline_path)
+    except ConfigError as e:
+        sys.stderr.write("[privacy-guard] 配置错误：%s\n" % e)
+        sys.exit(3)
+    fail_on = args.fail_on or cfg.get("fail_on") or SEV_MAJOR
 
-    scope = args.mode + (
-        "（非 git 仓库，已跳过历史扫描）" if args.mode in ("history", "all")
-        and history_ok is False else "")
+    findings, git_ok = [], None
+    if mode in ("worktree", "all"):
+        findings += scan_worktree(root)
+    if mode in ("history", "all"):
+        hist, git_ok = scan_history(root)
+        findings += hist
+    if mode == "staged":
+        findings += scan_staged(root)
+    if mode == "range":
+        rng, git_ok = scan_range(root, args.since, args.until)
+        if not git_ok:
+            # 区间扫描多用作门禁：区间无效不能静默当成「干净」放行
+            sys.stderr.write("[privacy-guard] 无法扫描区间 %s..%s：不是 git 仓库或 ref 不存在\n" % (args.since, args.until))
+            sys.exit(3)
+        findings += rng
+
+    findings = apply_config(dedupe(findings), cfg)
+    if args.write_baseline:
+        n = write_baseline(args.write_baseline, findings)
+        sys.stdout.write("[privacy-guard] 已把 %d 项命中写入基线 %s（只含指纹与打码片段）\n" % (n, args.write_baseline))
+        sys.exit(0)
+    if known:
+        kept = [f for f in findings if f.get("fingerprint") not in known]
+        SUPPRESSED["baseline"] += len(findings) - len(kept)
+        findings = kept
+
+    scope = mode + (" %s..%s" % (args.since, args.until) if mode == "range" else "")
+    if mode in ("history", "all") and git_ok is False:
+        scope += "（非 git 仓库或区间无效，已跳过 git 扫描）"
     report, counts, findings = build_report(findings, scope)
 
-    if args.format in ("md", "both"):
+    def emit(ext, text):
         if args.out:
-            with open(args.out + ".md", "w", encoding="utf-8") as f:
-                f.write(report)
+            with open(args.out + ext, "w", encoding="utf-8") as f:
+                f.write(text)
         else:
-            sys.stdout.write(report)
+            sys.stdout.write(text)
+
+    if args.format in ("md", "both"):
+        emit(".md", report)
     if args.format in ("json", "both"):
-        payload = {"scope": scope, "counts": counts, "findings": findings}
+        payload = {"scope": scope, "counts": counts, "suppressed": dict(SUPPRESSED), "fail_on": fail_on,
+                   "findings": findings}
         text = json.dumps(payload, ensure_ascii=False, indent=2)
         if args.out:
-            with open(args.out + ".json", "w", encoding="utf-8") as f:
-                f.write(text)
+            emit(".json", text)
         elif args.format == "json":
-            sys.stdout.write(text + "\n")
+            emit(".json", text + "\n")
+    if args.format == "sarif":
+        emit(".sarif", json.dumps(build_sarif(findings), ensure_ascii=False, indent=2) + "\n")
 
-    # 退出码：有 critical→2，有 major→1，否则 0（供 pre-commit 钩子据此拦截）
-    sys.exit(2 if counts[SEV_CRIT] else (1 if counts[SEV_MAJOR] else 0))
+    sys.exit(exit_code(counts, fail_on))
 
 
 if __name__ == "__main__":
