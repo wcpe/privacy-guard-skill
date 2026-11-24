@@ -25,7 +25,7 @@ if [ -z "$PY" ] || [ ! -f "$SCAN" ]; then
   exit 0
 fi
 
-# 扫暂存区；脚本退出码 2=critical / 1=major / 0=干净
+# 扫暂存区；脚本退出码 2=critical / 1=major / 0=干净 / 3=配置错误
 "$PY" "$SCAN" --mode staged --path . --format md
 code=$?
 
@@ -34,6 +34,11 @@ if [ "$code" -eq 2 ]; then
   echo "[privacy-guard] ⛔ 检测到致命敏感数据(critical)，已拦截本次提交。" >&2
   echo "  请核实上面位置并移除 / 脱敏后重新提交。" >&2
   echo "  确属误报时可用  git commit --no-verify  跳过（自负其责），并考虑补白名单。" >&2
+  exit 1
+fi
+
+if [ "$code" -eq 3 ]; then
+  echo "[privacy-guard] ⛔ 隐私扫描配置有误（见上方错误），为免漏检已拦截本次提交；修正 .privacy-guard.json 或基线后重试。" >&2
   exit 1
 fi
 
