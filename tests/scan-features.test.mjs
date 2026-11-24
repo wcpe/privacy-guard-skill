@@ -55,6 +55,46 @@ test('行内豁免、配置 allow / ignore_paths / severity 生效且计入豁�
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+// 给 15 位数字补 Luhn 校验位，运行时拼出能过 Luhn 的卡号样例
+const luhn = (body) => {
+  let sum = 0;
+  [...body].reverse().forEach((c, i) => { let d = +c; if (i % 2 === 0) { d *= 2; if (d > 9) d -= 9; } sum += d; });
+  return body + ((10 - (sum % 10)) % 10);
+};
+const CARD = luhn('622202100112345');
+
+test('十六进制校验和里的数字串、包名里的 .internal 段不误报；真卡号与内网主机名照报', () => {
+  const host = 'build01' + '.corp';
+  const { dir } = repo({
+    'Cargo.lock': `checksum = "93${'ab'}${CARD}f8b2ff13f34540b44e946ef35111825727b38d33286ef9861"\n`,
+    'Layout.kt': 'package top.wcpe.allincore.layout.engine.internal.taffy\n' +
+      'import top.wcpe.allincore.layout.engine.internal.taffy.Node\n' +
+      'val n = top.wcpe.allincore.layout.engine.internal.taffy.Node()\n',
+    'real.txt': `card = ${CARD}\nhost = ${host}\n`,
+  });
+  try {
+    const { d } = json(dir, '--mode', 'worktree');
+    assert.deepEqual(d.findings.map((f) => `${f.path}:${f.rule}`).sort(), ['real.txt:bank-card', 'real.txt:internal-hostname']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('已豁免项在报告里逐条列出规则、位置与理由', () => {
+  const { dir } = repo({
+    'a.txt': `k = ${AWS}\n`,
+    '.privacy-guard.json': JSON.stringify({ allow: [{ rule: 'aws-access-key-id', path: 'a.txt', reason: '文档示例' }] }),
+  });
+  try {
+    const { r, d } = json(dir, '--mode', 'worktree');
+    assert.equal(r.status, 0);
+    assert.deepEqual(d.suppressed_items.map((f) => [f.kind, f.rule, f.path, f.line]), [['config', 'aws-access-key-id', 'a.txt', 1]]);
+    assert.match(d.suppressed_items[0].reason, /文档示例/);
+    const md = scan(dir, '--mode', 'worktree', '--format', 'md').stdout;
+    assert.match(md, /## 已豁免/);
+    assert.match(md, /文档示例/);
+    assert.ok(!md.includes(AWS) && !r.stdout.includes(AWS), '豁免明细也不能落明文');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('fail_on 取值非法是配置错误（退出码 3）', () => {
   const { dir } = repo({ '.privacy-guard.json': JSON.stringify({ fail_on: 'high' }) });
   try {

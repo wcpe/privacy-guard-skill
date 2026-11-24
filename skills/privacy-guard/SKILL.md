@@ -124,7 +124,7 @@ python <技能目录>/scripts/install_hook.py --path .
 - `allow` 每条**必须写 `reason`**，按 rule / path（glob）/ fingerprint 任意组合匹配；指纹在 JSON 报告里，不含明文。
 - 行内豁免：在该行写 `privacy-guard:allow`（整行）或 `privacy-guard:allow rule-a,rule-b`。
 - **基线**：老项目先 `--write-baseline .privacy-guard-baseline.json` 把现存命中记账（只存指纹、规则与路径，不存片段），之后只有新增泄露才判失败；`--no-baseline` 随时看全量。**公开仓库别提交含手机号、身份证等个人信息命中的基线**（取值范围小，可由指纹穷举还原）。**进基线 ≠ 安全**：基线里的凭证仍要按第 4 步轮换，处理完从基线删掉。
-- 所有豁免都会在报告里计数（行内 / 配置 / 基线），不会悄悄发生。
+- 所有豁免都会在报告里计数（行内 / 配置 / 基线），并在「已豁免」表里逐条列出规则、位置、打码片段与理由（JSON 报告为 `suppressed_items`），不会悄悄发生。
 
 ## 在 SDD 项目里
 

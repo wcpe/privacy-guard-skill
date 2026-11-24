@@ -10,7 +10,7 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const SCAN = join(HERE, '..', 'skills', 'privacy-guard', 'scripts', 'scan.py')
 const { findPython } = createRequire(import.meta.url)('../hooks/find-python.cjs')
 const PLUGIN_ROOT = resolve(HERE, '..')
-const SERVER = { name: 'privacy-guard', version: '0.4.0' }
+const SERVER = { name: 'privacy-guard', version: '0.4.1' }
 
 const TOOLS = [
   {
