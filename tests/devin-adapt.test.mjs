@@ -78,3 +78,36 @@ test('MCP 在插件目录启动且未传 path 时提示传 path，而不是误�
   assert.equal(res.isError, true);
   assert.match(res.content[0].text, /path/);
 });
+
+test('git -C 带引号的含空格路径、&& 串联多个仓库提交时，逐个扫描并拦截任一 critical', () => {
+  const clean = stagedRepo('hello\n');
+  const spaced = mkdtempSync(path.join(tmpdir(), 'pg hook '));
+  execFileSync('git', ['init', '-q'], { cwd: spaced, stdio: 'ignore' });
+  writeFileSync(path.join(spaced, 'config.txt'), `aws_access_key_id = ${FAKE_KEY}\n`);
+  execFileSync('git', ['add', 'config.txt'], { cwd: spaced, stdio: 'ignore' });
+  try {
+    const quoted = runHook({ tool_name: 'exec', tool_input: { command: `git -C "${spaced}" commit -m x` } });
+    assert.equal(quoted.status, 2, '引号包住的含空格路径也要识别');
+    const chained = runHook({ tool_name: 'exec', tool_input: { command: `git -C ${clean} commit -m a && git -C "${spaced}" commit -m b` } });
+    assert.equal(chained.status, 2, '第二个仓库的 critical 也要拦');
+    assert.doesNotMatch(chained.stdout, new RegExp(FAKE_KEY));
+  } finally {
+    rmSync(clean, { recursive: true, force: true });
+    rmSync(spaced, { recursive: true, force: true });
+  }
+});
+
+test('MCP 的相对 path 以宿主项目根为基准解析，而不是插件目录', () => {
+  const proj = stagedRepo('hello\n');
+  const req = [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05' } },
+    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'privacy_scan', arguments: { path: '.' } } },
+  ].map((m) => JSON.stringify(m)).join('\n') + '\n';
+  try {
+    const env = { PATH: process.env.PATH, HOME: process.env.HOME, DEVIN_PROJECT_DIR: proj };
+    const r = spawnSync('node', ['mcp/privacy-mcp.mjs'], { cwd: repoRoot, input: req, encoding: 'utf8', env });
+    const res = r.stdout.trim().split('\n').map((l) => JSON.parse(l)).find((m) => m.id === 2).result;
+    assert.equal(res.isError, false, res.content[0].text);
+    assert.ok(res.content[0].text.includes(proj), '应扫描项目目录');
+  } finally { rmSync(proj, { recursive: true, force: true }); }
+});

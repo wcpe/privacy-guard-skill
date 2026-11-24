@@ -16,16 +16,18 @@ process.stdin.on('end', function () {
   const ti = input.tool_input || {}
   const cmd = String(ti.command || '')
   // 只在 git commit 时动；用户显式 --no-verify 绕过则尊重其意图、放行
-  if (!/\bgit\s+(?:-C\s+\S+\s+)?commit\b/.test(cmd)) process.exit(0)
+  const ARG = '("[^"]+"|\'[^\']+\'|[^\\s;&|]+)'
+  const commitRe = new RegExp('\\bgit\\s+(?:-C\\s+' + ARG + '\\s+)?commit\\b', 'g')
+  const commits = Array.from(cmd.matchAll(commitRe))
+  if (!commits.length) process.exit(0)
   if (/--no-verify\b/.test(cmd)) process.exit(0)
 
-  // 提交实际发生的仓库：Devin exec 的 workdir、命令开头的 `cd <dir> &&`、`git -C <dir>`，否则为事件 cwd / hook cwd
+  // 提交实际发生的仓库：Devin exec 的 workdir、命令开头的 `cd <dir> &&`、每处 `git -C <dir>`，否则为事件 cwd / hook cwd
   const unquote = function (s) { return s.replace(/^["']|["']$/g, '') }
-  let cwd = String(ti.workdir || input.cwd || process.cwd())
-  const cd = cmd.match(/^\s*cd\s+("[^"]+"|'[^']+'|[^\s;&|]+)\s*&&/)
-  if (cd) cwd = path.resolve(cwd, unquote(cd[1]))
-  const gc = cmd.match(/\bgit\s+-C\s+("[^"]+"|'[^']+'|\S+)\s+commit\b/)
-  if (gc) cwd = path.resolve(cwd, unquote(gc[1]))
+  let base = String(ti.workdir || input.cwd || process.cwd())
+  const cd = cmd.match(new RegExp('^\\s*cd\\s+' + ARG + '\\s*&&'))
+  if (cd) base = path.resolve(base, unquote(cd[1]))
+  const repos = Array.from(new Set(commits.map(function (m) { return m[1] ? path.resolve(base, unquote(m[1])) : base })))
 
   const py = findPython()
   if (!py) {
@@ -33,19 +35,25 @@ process.stdin.on('end', function () {
     process.exit(0)
   }
   const scan = path.join(__dirname, '..', 'skills', 'privacy-guard', 'scripts', 'scan.py')
-  const r = spawnSync(py, [scan, '--mode', 'staged', '--path', cwd, '--format', 'md'], { encoding: 'utf8' })
-  if (r.error || typeof r.status !== 'number') process.exit(0) // 引擎跑不起来不阻断
+  const critical = []
+  const major = []
+  repos.forEach(function (cwd) {
+    const r = spawnSync(py, [scan, '--mode', 'staged', '--path', cwd, '--format', 'md'], { encoding: 'utf8' })
+    if (r.error || typeof r.status !== 'number') return // 引擎跑不起来不阻断
+    const report = (repos.length > 1 ? '仓库 ' + cwd + '：\n' : '') + (r.stdout || '').trim()
+    if (r.status === 2) critical.push(report)
+    else if (r.status === 1) major.push(report)
+  })
 
-  const report = (r.stdout || '').trim()
-  if (r.status === 2) {
-    const reason = '[privacy-guard] ⛔ 暂存区检测到致命敏感数据(critical)，已拦下本次提交：\n\n' + report +
+  if (critical.length) {
+    const reason = '[privacy-guard] ⛔ 暂存区检测到致命敏感数据(critical)，已拦下本次提交：\n\n' + critical.join('\n\n') +
       '\n\n请移除 / 脱敏后重新提交。确属误报时可 `git commit --no-verify` 跳过（自负其责）并补白名单。'
     process.stdout.write(JSON.stringify({ decision: 'block', reason: reason }) + '\n')
     console.error(reason)
     process.exit(2)
   }
-  if (r.status === 1) {
-    console.error('[privacy-guard] ⚠ 暂存区有疑似敏感数据(major)，未拦截，请核实：\n\n' + report)
+  if (major.length) {
+    console.error('[privacy-guard] ⚠ 暂存区有疑似敏感数据(major)，未拦截，请核实：\n\n' + major.join('\n\n'))
   }
   process.exit(0)
 })
