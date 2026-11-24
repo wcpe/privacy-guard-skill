@@ -70,11 +70,11 @@ test('十六进制校验和里的数字串、包名里的 .internal 段不误报
     'Layout.kt': 'package top.wcpe.allincore.layout.engine.internal.taffy\n' +
       'import top.wcpe.allincore.layout.engine.internal.taffy.Node\n' +
       'val n = top.wcpe.allincore.layout.engine.internal.taffy.Node()\n',
-    'real.txt': `card = ${CARD}\nhost = ${host}\n`,
+    'real.txt': `card = ${CARD}\nhost = ${host}\ntel = 1${'3812345678'}ext.12\n`,
   });
   try {
     const { d } = json(dir, '--mode', 'worktree');
-    assert.deepEqual(d.findings.map((f) => `${f.path}:${f.rule}`).sort(), ['real.txt:bank-card', 'real.txt:internal-hostname']);
+    assert.deepEqual(d.findings.map((f) => `${f.path}:${f.rule}`).sort(), ['real.txt:bank-card', 'real.txt:cn-mobile', 'real.txt:internal-hostname']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

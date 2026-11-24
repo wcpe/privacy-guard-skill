@@ -89,11 +89,15 @@ def _is_datetime14(num):
 
 
 def _in_hex_run(m):
-    """命中的数字串紧贴十六进制字母（a-f），说明它只是 sha256 校验和、哈希、UUID 之类十六进制串的一段。
-    如 Cargo.lock 的 checksum = "9330f8b2ff13f345…"，其中的连续数字子串会偶然通过 Luhn / 身份证校验。"""
-    before = m.string[m.start() - 1:m.start()]
-    after = m.string[m.end():m.end() + 1]
-    return bool(re.match(r"[A-Fa-f]", before) or re.match(r"[A-Fa-f]", after))
+    """命中的数字串只是一段长十六进制串（sha256 / sha1 / md5 校验和、哈希）的一部分。
+    如 Cargo.lock 的 checksum = "9330f8b2ff13f345…"，其中的连续数字子串会偶然通过 Luhn / 身份证校验。
+    要求所在的连续 [0-9a-f] 串至少 20 位，避免把 `13812345678ext.123` 这类紧跟字母的真号码误放。"""
+    s, a, b = m.string, m.start(), m.end()
+    while a > 0 and s[a - 1] in "0123456789abcdefABCDEF":
+        a -= 1
+    while b < len(s) and s[b] in "0123456789abcdefABCDEF":
+        b += 1
+    return b - a >= 20 and b - a > m.end() - m.start()
 
 
 def bank_card_valid(m):
