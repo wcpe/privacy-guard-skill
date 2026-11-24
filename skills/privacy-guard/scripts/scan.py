@@ -330,6 +330,8 @@ INLINE_ALLOW_RE = re.compile(r"privacy-guard:allow\b(?:[ \t]+([a-z0-9][a-z0-9,_-
 SUPPRESSED = {"inline": 0, "config": 0, "baseline": 0}
 # 豁免明细（已打码），报告里单列「已豁免」，便于审计每一条豁免
 SUPPRESSED_ITEMS = []
+# Markdown 报告最多列出的豁免条数（钩子把报告塞进提示与输出缓冲区，不能无限长）
+MAX_SUPPRESSED_ROWS = 200
 
 
 def _suppress(kind, f, reason=""):
@@ -773,13 +775,17 @@ def build_report(findings, scope):
     if SUPPRESSED_ITEMS:
         lines += ["", "## 已豁免（不计入统计，供审计）", "",
                   "| # | 方式 | 规则 | 位置 | 打码片段 | 理由 |", "|---|---|---|---|---|---|"]
-        for i, f in enumerate(SUPPRESSED_ITEMS, 1):
+        for i, f in enumerate(SUPPRESSED_ITEMS[:MAX_SUPPRESSED_ROWS], 1):
             loc = f["path"] + (":%d" % f["line"] if f.get("line") else "")
             if f.get("commit"):
                 loc += " @ " + f["commit"]
             reason = f["reason"].replace("|", "\\|").replace("\n", " ")
             lines.append("| %d | %s | `%s` | %s | `%s` | %s |"
                          % (i, f["kind"], f["rule"], loc, f["match"], reason))
+        if len(SUPPRESSED_ITEMS) > MAX_SUPPRESSED_ROWS:
+            lines.append("")
+            lines.append("> 另有 %d 条豁免未列出，完整明细见 `--format json` 的 `suppressed_items`。"
+                         % (len(SUPPRESSED_ITEMS) - MAX_SUPPRESSED_ROWS))
     return "\n".join(lines) + "\n", counts, findings
 
 

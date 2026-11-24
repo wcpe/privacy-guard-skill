@@ -93,6 +93,11 @@ test('已豁免项在报告里逐条列出规则、位置与理由', () => {
     assert.match(md, /## 已豁免/);
     assert.match(md, /文档示例/);
     assert.ok(!md.includes(AWS) && !r.stdout.includes(AWS), '豁免明细也不能落明文');
+    const many = repo({ 'a.txt': Array.from({ length: 205 }, () => `k = ${AWS} # privacy-guard:allow`).join('\n') + '\n' });
+    try {
+      const m = scan(many.dir, '--mode', 'worktree', '--format', 'md').stdout;
+      assert.match(m, /另有 5 条豁免未列出/, 'Markdown 豁免明细有条数上限');
+    } finally { rmSync(many.dir, { recursive: true, force: true }); }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

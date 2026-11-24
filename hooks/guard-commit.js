@@ -38,7 +38,12 @@ process.stdin.on('end', function () {
   const critical = []
   const major = []
   repos.forEach(function (cwd) {
-    const r = spawnSync(py, [scan, '--mode', 'staged', '--path', cwd, '--format', 'md'], { encoding: 'utf8' })
+    const r = spawnSync(py, [scan, '--mode', 'staged', '--path', cwd, '--format', 'md'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+    // 报告大到撑爆缓冲区时子进程已被杀、拿不到退出码：不能当作「引擎跑不起来」放行，按拦截处理
+    if (r.error && r.error.code === 'ENOBUFS') {
+      critical.push((repos.length > 1 ? '仓库 ' + cwd + '：\n' : '') + '扫描报告过大（超出 64MB 输出缓冲），无法确认暂存区是否安全；请先在终端运行 scan.py --mode staged 查看。')
+      return
+    }
     if (r.error || typeof r.status !== 'number') return // 引擎跑不起来不阻断
     const report = (repos.length > 1 ? '仓库 ' + cwd + '：\n' : '') + (r.stdout || '').trim()
     if (r.status === 2) critical.push(report)
