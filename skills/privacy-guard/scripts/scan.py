@@ -133,7 +133,9 @@ def internal_host_valid(m):
     ① 该行是 package / import 语句，且命中后不接 `/` 或 `:`（接了就是 Go 模块路径 / URL 里的真主机名）；② 命中后还接着 `.标识符`（internal 只是中间段，不是顶级域）且首段是常见顶级域
     （反向域名包名）或后续段含大写（类名）。"""
     line = m.string
-    if re.match(r"\s*(?:package|import)\s", line) and line[m.end():m.end() + 1] not in ("/", ":"):
+    nxt = line[m.end():m.end() + 2]
+    as_path = nxt[:1] == ":" or (nxt[:1] == "/" and nxt not in ("/*", "//"))  # `//`、`/*` 是注释不是路径
+    if re.match(r"\s*(?:package|import)\s", line) and not as_path:
         return False
     rest = re.match(r"\.([A-Za-z_][\w.]*)", line[m.end():])
     if rest:

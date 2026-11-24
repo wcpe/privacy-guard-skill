@@ -69,6 +69,7 @@ test('十六进制校验和里的数字串、包名里的 .internal 段不误报
     'Cargo.lock': `checksum = "93${'ab'}${CARD}f8b2ff13f34540b44e946ef35111825727b38d33286ef9861"\n`,
     'Layout.kt': 'package top.wcpe.allincore.layout.engine.internal.taffy\n' +
       'import top.wcpe.allincore.layout.engine.internal.taffy.Node\n' +
+      'package com.acme.internal/* 内部包 */\n' +
       'val n = top.wcpe.allincore.layout.engine.internal.taffy.Node()\n',
     'main.go': `import "git.${'corp'}/team/pkg"\n`,
     'ids.txt': `id = 0f8fad5b-d9cb-469f-a165-a${'13812345678'}\n`,
