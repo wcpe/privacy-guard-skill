@@ -120,12 +120,34 @@ test('区间扫描覆盖二进制 / 空的敏感文件、中文路径与合并�
     spawnSync('git', ['merge', '-q', 'side'], { cwd: dir });
     writeFileSync(path.join(dir, 'a.txt'), `resolved ${NPM}\n`);
     git('add', 'a.txt'); git('commit', '-qm', 'merge');
+    assert.equal(execFileSync('git', ['rev-list', '--parents', '-n1', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim().split(' ').length, 3, '确实生成了合并提交');
     const { d } = json(dir, '--since', 'v1');
     const got = d.findings.map((f) => `${f.rule}@${f.path}`).sort();
     assert.ok(got.includes('pkcs12-file@cert.p12') || got.some((g) => g.endsWith('@cert.p12')), got.join());
     assert.ok(got.some((g) => g.endsWith('@.env')), got.join());
     assert.ok(got.includes('gitlab-token@配置/说明.txt'), got.join());
     assert.ok(got.includes('npm-token@a.txt'), got.join());
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('功能分支同步目标分支时，目标分支既有内容不算新增；含空格路径可按精确路径豁免', () => {
+  const { dir, git } = repo({ 'a.txt': 'base\n' });
+  try {
+    git('add', '.'); git('commit', '-qm', 'base'); git('branch', 'main0');
+    git('checkout', '-qb', 'feature'); git('checkout', '-q', 'main0');
+    writeFileSync(path.join(dir, 'old.txt'), `k = ${GLPAT}\n`);
+    writeFileSync(path.join(dir, '.env'), 'X=1\n');
+    git('add', '.'); git('commit', '-qm', 'main side');
+    git('checkout', '-q', 'feature');
+    mkdirSync(path.join(dir, '我的 目录'));
+    writeFileSync(path.join(dir, '我的 目录', 'x.txt'), `k = ${NPM}\n`);
+    writeFileSync(path.join(dir, '.privacy-guard.json'), JSON.stringify({ allow: [{ path: '我的 目录/x.txt', reason: '测试夹具' }] }));
+    git('add', '.'); git('commit', '-qm', 'feat');
+    git('merge', '-q', '--no-edit', 'main0');
+    assert.equal(execFileSync('git', ['rev-list', '--parents', '-n1', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim().split(' ').length, 3);
+    const { r, d } = json(dir, '--since', 'main0');
+    assert.deepEqual(d.findings, [], JSON.stringify(d.findings));
+    assert.equal(r.status, 0);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

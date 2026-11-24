@@ -480,10 +480,11 @@ def scan_range(root, since, until="HEAD"):
     """扫提交区间 since..until 里**新增**的内容（PR / 上个 tag 以来）：只看各提交的新增行与新增/修改的文件名，并标出提交。"""
     if _git(root, ["rev-parse", "--git-dir"]).returncode != 0:
         return [], False
-    # quotePath=false：中文等路径不加引号；first-parent：合并提交（含解决冲突时写入的内容）按相对第一父提交的差异算新增
-    git_args = ["-c", "core.quotePath=false", "log", "--no-color", "--no-ext-diff", "--no-renames",
-                "--diff-merges=first-parent", "%s..%s" % (since, until)]
-    res = _git(root, git_args[:3] + ["-p", "--unified=0", "--format=@@privacy-guard-commit %h"] + git_args[3:])
+    # quotePath=false：中文等路径不加引号。合并提交用 --cc（老版本 Git 也支持）：只把相对**所有**父提交都是新增的内容
+    # 算作本区间新增（即解决冲突时写入的内容），把目标分支同步进功能分支时带进来的既有内容不算
+    git_args = ["-c", "core.quotePath=false", "log", "--no-color", "--no-ext-diff", "--no-renames", "--cc",
+                "%s..%s" % (since, until)]
+    res = _git(root, git_args[:3] + ["--unified=0", "--format=@@privacy-guard-commit %h"] + git_args[3:])
     names = _git(root, git_args[:3] + ["--name-only", "--diff-filter=AMC", "--format=@@privacy-guard-commit %h"] + git_args[3:])
     if res.returncode != 0 or names.returncode != 0:
         return [], False
@@ -496,22 +497,26 @@ def scan_range(root, since, until="HEAD"):
             for f in check_filename(ln.strip()):
                 f["commit"] = commit
                 findings.append(f)
-    commit, cur, lineno = "", None, 0
+    commit, cur, lineno, width = "", None, 0, 1
     for ln in res.stdout.decode("utf-8", "replace").splitlines():
         if ln.startswith("@@privacy-guard-commit "):
             commit = ln[len("@@privacy-guard-commit "):]
         elif ln.startswith("+++ "):
-            tgt = ln[4:]
+            # 未加引号且含空格的路径，Git 会在行尾补一个制表符
+            tgt = ln[4:].rstrip("\t")
             if tgt.startswith('"') and tgt.endswith('"'):
                 tgt = tgt[1:-1]
             cur = tgt[2:] if tgt.startswith("b/") else None
         elif ln.startswith("@@"):
+            # 普通提交 @@ -a +b @@（1 列前缀）；合并提交 @@@ -a -b +c @@@（每个父提交一列前缀）
+            width = len(ln) - len(ln.lstrip("@")) - 1
             m = re.search(r"\+(\d+)", ln)
             lineno = int(m.group(1)) if m else 0
-        elif ln.startswith("+") and cur:
-            for f in classify_line(cur, lineno, ln[1:]):
-                f["commit"] = commit
-                findings.append(f)
+        elif cur and len(ln) >= width and ln[:width].strip("+ ") == "" and "+" in ln[:width]:
+            if ln[:width] == "+" * width:
+                for f in classify_line(cur, lineno, ln[width:]):
+                    f["commit"] = commit
+                    findings.append(f)
             lineno += 1
     return findings, True
 
