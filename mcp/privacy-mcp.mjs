@@ -3,11 +3,14 @@
 // 工具 privacy_scan：复用 Python 引擎 scan.py，返回**脱敏**的分级结果（counts + findings）。只读。
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { createRequire } from 'node:module'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SCAN = join(HERE, '..', 'skills', 'privacy-guard', 'scripts', 'scan.py')
-const SERVER = { name: 'privacy-guard', version: '0.2.0' }
+const { findPython } = createRequire(import.meta.url)('../hooks/find-python.cjs')
+const PLUGIN_ROOT = resolve(HERE, '..')
+const SERVER = { name: 'privacy-guard', version: '0.3.0' }
 
 const TOOLS = [
   {
@@ -17,7 +20,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: '项目根目录（默认当前工作目录）' },
+        path: { type: 'string', description: '要扫描的项目根目录，建议传绝对路径（Devin 下 MCP 进程的工作目录是插件目录，不传会报错提示）' },
         mode: {
           type: 'string',
           enum: ['worktree', 'history', 'staged', 'all'],
@@ -33,18 +36,12 @@ function ok (id, r) { send({ jsonrpc: '2.0', id, result: r }) }
 function err (id, c, m) { send({ jsonrpc: '2.0', id, error: { code: c, message: m } }) }
 function text (t, isError = false) { return { content: [{ type: 'text', text: t }], isError } }
 
-function findPython () {
-  for (const c of ['python3', 'python', 'py']) {
-    const t = spawnSync(c, ['-c', 'import sys'], { stdio: 'ignore' })
-    if (t.status === 0) return c
-  }
-  return null
-}
-
 function privacyScan (args) {
   const py = findPython()
   if (!py) return text('未找到可用的 python——扫描引擎 scan.py 依赖 python，请先安装。', true)
-  const dir = args.path || process.cwd()
+  // Devin 下 MCP 进程的 cwd 是插件目录而不是用户项目：没传 path 时用宿主给的项目根，仍落在插件目录就要求显式传
+  const dir = resolve(args.path || process.env.DEVIN_PROJECT_DIR || process.env.CLAUDE_PROJECT_DIR || process.cwd())
+  if (!args.path && dir === PLUGIN_ROOT) return text('请用 path 参数传入要扫描的项目根目录（绝对路径）：当前工作目录是插件自身目录，不是你的项目。', true)
   const mode = args.mode || 'worktree'
   const r = spawnSync(py, [SCAN, '--mode', mode, '--path', dir, '--format', 'json'], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
   if (r.error) return text('引擎执行失败：' + r.error.message, true)
