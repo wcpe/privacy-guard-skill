@@ -71,13 +71,14 @@ test('十六进制校验和里的数字串、包名里的 .internal 段不误报
       'import top.wcpe.allincore.layout.engine.internal.taffy.Node\n' +
       'package com.acme.internal/* 内部包 */\n' +
       'val n = top.wcpe.allincore.layout.engine.internal.taffy.Node()\n',
-    'main.go': `import "git.${'corp'}/team/pkg"\n`,
+    'main.go': `import "git.${'corp'}//team/pkg"\n`,
+    'Url.kt': `import foo.Bar // 镜像 http://mirror.${'corp'}//repo\n`,
     'ids.txt': `id = 0f8fad5b-d9cb-469f-a165-a${'13812345678'}\n`,
     'real.txt': `card = ${CARD}\nhost = ${host}\ntel = 1${'3812345678'}ext.12\n`,
   });
   try {
     const { d } = json(dir, '--mode', 'worktree');
-    assert.deepEqual(d.findings.map((f) => `${f.path}:${f.rule}`).sort(), ['main.go:internal-hostname', 'real.txt:bank-card', 'real.txt:cn-mobile', 'real.txt:internal-hostname']);
+    assert.deepEqual(d.findings.map((f) => `${f.path}:${f.rule}`).sort(), ['Url.kt:internal-hostname', 'main.go:internal-hostname', 'real.txt:bank-card', 'real.txt:cn-mobile', 'real.txt:internal-hostname']);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
