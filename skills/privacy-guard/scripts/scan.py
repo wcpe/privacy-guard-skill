@@ -137,7 +137,8 @@ def internal_host_valid(m):
     （反向域名包名）或后续段含大写（类名）。"""
     line = m.string
     # 前面是单个 `/`（如 './config.local'、src/app.local.json）是文件路径段，不是主机名；`//` 后才可能是 URL 主机
-    if line[m.start() - 1:m.start()] == "/" and line[m.start() - 2:m.start()] != "//":
+    # JSON 里转义的 `\/` 仍是 URL 分隔，不当作路径段
+    if line[m.start() - 1:m.start()] == "/" and line[m.start() - 2:m.start() - 1] not in ("/", "\\"):
         return False
     # 只豁免紧跟在 package / import 关键字后面的那个点分包名本身；同行注释或引号里的 URL 照常检查
     kw = re.match(r"\s*(?:package|import)\s+(?:/\*.*?\*/\s*)?(?:static\s+)?([\w.]+)", line)
