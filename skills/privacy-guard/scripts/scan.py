@@ -444,7 +444,7 @@ def scan_history(root):
 
 def _history_commit_for_blob(root, sha):
     """用 --find-object 定位「引入该 blob」的提交（findings 通常很少，按需查询不拖累整体）。"""
-    res = _git(root, ["log", "--all", "--oneline", "--find-object", sha, "-1"])
+    res = _git(root, ["log", "--all", "--format=%h", "--find-object", sha, "-1"])
     if res.returncode == 0:
         line = res.stdout.decode("utf-8", "replace").strip().splitlines()
         if line:
@@ -481,7 +481,7 @@ def scan_range(root, since, until="HEAD"):
     if _git(root, ["rev-parse", "--git-dir"]).returncode != 0:
         return [], False
     res = _git(root, ["log", "-p", "--unified=0", "--no-color", "--no-ext-diff", "--no-renames",
-                      "--format=@@privacy-guard-commit %h %s", "%s..%s" % (since, until)])
+                      "--format=@@privacy-guard-commit %h", "%s..%s" % (since, until)])
     if res.returncode != 0:
         return [], False
     findings, commit, cur, lineno = [], "", "(range)", 0

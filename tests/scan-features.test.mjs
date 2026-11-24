@@ -93,7 +93,7 @@ test('--since 只扫区间新增并带提交；无效 ref 退出码 3', () => {
     const { r, d } = json(dir, '--since', 'v1');
     assert.equal(r.status, 2);
     assert.deepEqual(d.findings.map((f) => f.rule).sort(), ['dotenv-file', 'gitlab-token']);
-    assert.ok(d.findings.every((f) => /feat: new/.test(f.commit)));
+    assert.ok(d.findings.every((f) => /^[0-9a-f]{7,}$/.test(f.commit)), '只带提交号，不带可能含敏感信息的提交标题');
     assert.equal(scan(dir, '--since', 'no-such-ref').status, 3);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
