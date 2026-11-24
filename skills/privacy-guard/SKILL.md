@@ -1,7 +1,7 @@
 ---
 name: privacy-guard
 description: 检测当前项目工作区与 git 历史中是否硬编码了隐私/敏感数据(凭证密钥、PII、内网架构、环境元数据、敏感文件)时使用。当用户说"扫一下有没有泄露密钥/隐私、提交前查敏感信息、检查 git 历史有没有密码、有没有硬编码 token/身份证/内网IP、开源/交付前脱敏自查、防止把 .env/私钥提交上去、装个提交前拦截钩子防泄密、secret scanning、敏感信息检测"时触发——即使没明说"隐私扫描"。捆绑 rg+Python 检测引擎(正则+熵值+Luhn/身份证校验+白名单降误报),扫工作区与全量 git 历史,产出**脱敏**分级报告 + 按类修复指引(含历史清除与密钥轮换),可选安装 pre-commit 拦截钩子。**只检测、只报告、给指引——绝不自动改写历史或吊销密钥**。
-argument-hint: "[worktree|staged|history|all] [项目路径]"
+argument-hint: "[worktree|staged|history|range <ref>|all] [项目路径]"
 ---
 
 # 隐私数据检测（privacy-guard）
@@ -34,16 +34,33 @@ argument-hint: "[worktree|staged|history|all] [项目路径]"
 
 ## 强制流程
 
-### 1. 圈定范围（mode 四选一）
+### 0. 定位引擎（任何 agent 通用，不依赖插件）
+
+`scripts/scan.py` 与本 SKILL.md 同目录树：**本文件所在目录 + `/scripts/scan.py`**。纯技能安装（Codex / opencode / Cursor / Gemini CLI 等拷目录的方式）就用这个路径；插件安装下也一样可用（Claude Code 另可写 `${CLAUDE_PLUGIN_ROOT}/skills/privacy-guard/scripts/scan.py`）。若环境里有 MCP 工具 `privacy_scan`，可直接调用它（**务必传 `path` = 项目根**），等价于跑脚本。
+
+### 意图 → 怎么扫（速查）
+
+| 用户说的 | 命令要点 |
+|---|---|
+| 开源 / 交付前全面自查 | `--mode all` |
+| 提交前查一下 | `--mode staged` |
+| 以前提交过后来删了 | `--mode history` |
+| 这个 PR / 这个版本有没有带进新泄露 | `--since <base 分支或上个 tag>`（range 模式，只看新增） |
+| 装提交前拦截 | `scripts/install_hook.py`（第 5 步） |
+| 接 CI / GitHub Code Scanning | `--format sarif` + `assets/ci/github-actions.yml`（第 6 步） |
+| 老项目一扫一大片、只想管新增 | `--write-baseline`（见「项目配置与基线」） |
+
+### 1. 圈定范围（mode 五选一）
 
 - **`all`（默认）** —— 工作区 + 全量 git 历史，开源 / 交付 / 首次自查用这个。
 - **`worktree`** —— 只扫当前文件（含被 `.gitignore` 忽略的 `.env`、私钥——这些恰恰最该查）。
 - **`history`** —— 只扫 git 历史（怀疑「以前提交过、后来删了」）。按 blob 去重、定位涉及提交。
 - **`staged`** —— 只扫本次将提交的暂存内容（pre-commit 钩子用）。
+- **`range`**（`--since <ref>`）—— 只扫 `ref..HEAD` 各提交**新增**的行与文件，结果带提交号。PR 门（ref=base 分支）、发版门（ref=上个 tag）用它；ref 无效时退出码 3，不会静默放行。
 
 ### 2. 跑检测引擎
 
-引擎是 `scripts/scan.py`（纯 Python；有 `rg` 时自动用它加速文件预筛，无则全量遍历——结果一致只是更慢）。Claude Code 下绝对寻址用 `${CLAUDE_PLUGIN_ROOT}/skills/privacy-guard/scripts/scan.py`；Devin / Codex / 其他工具用技能目录内的 `scripts/scan.py`（Devin 的技能列表会给出 SKILL.md 的绝对路径，同目录下即是）。
+引擎是 `scripts/scan.py`（纯 Python 标准库；有 `rg` 时自动用它加速文件预筛，无则全量遍历——结果一致只是更慢）。路径见第 0 步。
 
 ```bash
 # 扫当前项目（工作区+历史），报告写到 .tmp/（不入库）
@@ -51,7 +68,8 @@ python <脚本路径> --mode all --path . --out .tmp/privacy-scan
 ```
 
 - 报告默认同时出 `.md`（人看）和 `.json`（程序 / 复核用）；不带 `--out` 则打到 stdout。
-- 退出码：**2=有 critical，1=有 major，0=干净**——可据此在 CI / 钩子里拦截。
+- 退出码：**2=有 critical，1=达到 `--fail-on` 门槛（默认 major），0=通过，3=配置或参数错误**——可据此在 CI / 钩子里拦截。`--fail-on critical` 只拦致命项。
+- 格式：`--format md|json|both|sarif`；SARIF 可直接上传 GitHub Code Scanning。
 - **大库 / 历史很长**时跑得久属正常（要逐 blob 解内容）；只想快速过一遍可先 `--mode worktree`。
 
 ### 3. 读报告并核实
@@ -71,20 +89,51 @@ python <脚本路径> --mode all --path . --out .tmp/privacy-scan
 
 ### 5.（可选）安装 pre-commit 拦截钩子
 
-用户**明确要**「提交前自动拦截」时，才装钩子。钩子自包含：把 `scan.py` 和 `assets/pre-commit` **一起**拷进 `.git/hooks/`，钩子调用它的同目录副本，不依赖外部路径。钩子对**暂存内容**跑 `--mode staged`，命中 critical 时**退出码非 0 挡下提交**。
+用户**明确要**「提交前自动拦截」时，才装钩子。用安装脚本（自动识别 `core.hooksPath` / husky、worktree 与子模块；已有别人的 pre-commit 时不覆盖，改写 `pre-commit.privacy-guard` 并告诉你怎么串联）：
 
 ```bash
-cp <技能目录>/scripts/scan.py    .git/hooks/privacy_scan.py
-cp <技能目录>/assets/pre-commit  .git/hooks/pre-commit
-chmod +x .git/hooks/pre-commit          # Windows 非 WSL 下 git 仍会执行，无需 chmod
+python <技能目录>/scripts/install_hook.py --path .
 ```
 
+钩子自包含（引擎副本 `privacy_scan.py` + `pre-commit`），对**暂存内容**跑 `--mode staged`、读项目 `.privacy-guard.json` 与基线，命中 critical 时挡下提交。用 [pre-commit](https://pre-commit.com) 框架的项目也可以在 `.pre-commit-config.yaml` 里引用本仓库的 `privacy-guard` hook（见 README）。
+
 装前向用户说明：钩子只挡新提交，**挡不住已经在历史里的旧泄露**（那要走第 4 步）；且本地钩子可被 `--no-verify` 绕过，团队级强约束需配 CI 扫描。
+
+### 6.（可选）接入 CI
+
+把 `assets/ci/github-actions.yml` 拷到 `.github/workflows/privacy-scan.yml`：PR 上扫 `base..head` 新增，推主线扫工作区，SARIF 上传 Code Scanning，critical 判失败。其他 CI 照抄其中两条 `scan.py` 命令即可。
+
+## 项目配置与基线
+
+项目根放 `.privacy-guard.json`（可入库；钩子、MCP、CI 都会读）：
+
+```json
+{
+  "fail_on": "major",
+  "baseline": ".privacy-guard-baseline.json",
+  "ignore_paths": ["testdata/**"],
+  "allow": [
+    { "rule": "email", "path": "docs/**", "reason": "文档里的公开联系邮箱" },
+    { "fingerprint": "3f9c0a1b2c3d4e5f", "reason": "已确认是测试夹具里的假 key" }
+  ],
+  "severity": { "private-ipv4": "off", "internal-hostname": "minor" },
+  "rules": [{ "id": "corp-api-key", "pattern": "CORP-[A-Z0-9]{24}", "severity": "critical" }]
+}
+```
+
+- `allow` 每条**必须写 `reason`**，按 rule / path（glob）/ fingerprint 任意组合匹配；指纹在 JSON 报告里，不含明文。
+- 行内豁免：在该行写 `privacy-guard:allow`（整行）或 `privacy-guard:allow rule-a,rule-b`。
+- **基线**：老项目先 `--write-baseline .privacy-guard-baseline.json` 把现存命中记账（只存指纹 + 打码片段，可入库），之后只有新增泄露才判失败；`--no-baseline` 随时看全量。**进基线 ≠ 安全**：基线里的凭证仍要按第 4 步轮换，处理完从基线删掉。
+- 所有豁免都会在报告里计数（行内 / 配置 / 基线），不会悄悄发生。
+
+## 在 SDD 项目里
+
+装了 sdd-skills 时，它的验收（`sdd-accept-phase`）、发版（`sdd-release-version`）、代码审查（`sdd-review-code`）、改造（`retrofit-to-sdd`）会在关键节点调用本技能：发版 / 验收门用 `--since <上个 tag>` 只看本版新增，retrofit 时生成基线。本技能本身不要求 SDD。
 
 ## 误报与白名单
 
 - 已内置抑制：`example/sample/dummy/your_xxx/changeme/<...>` 占位、AWS 文档示例 key、Luhn/身份证校验不过的数字串、`.env.example`、`noreply@`/`example.com` 邮箱、回环地址、CI 通用用户名（runner/root…）。
-- 仍误报时：**不要为压数字去删规则**——在报告里标注「确认误报」并说明原因即可；要长期豁免某条，建议在 `references/patterns.md` 记录约定，而非偷偷放宽检测。
+- 仍误报时：**不要为压数字去删规则**——用 `.privacy-guard.json` 的 `allow`（写清 reason）或行内 `privacy-guard:allow` 精确豁免，而不是放宽检测。
 
 ## 红线
 
