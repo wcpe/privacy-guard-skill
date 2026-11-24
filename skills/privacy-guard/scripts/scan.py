@@ -289,7 +289,7 @@ FILENAME_RULES = [
 
 
 # 行内豁免：同一行写 `privacy-guard:allow`（全部规则）或 `privacy-guard:allow rule-a,rule-b`（指定规则）
-INLINE_ALLOW_RE = re.compile(r"privacy-guard:allow(?:[ \t]+([a-z0-9][a-z0-9,_-]*))?")
+INLINE_ALLOW_RE = re.compile(r"privacy-guard:allow\b(?:[ \t]+([a-z0-9][a-z0-9,_-]*))?")
 # 被豁免 / 基线接纳的数量，写进报告，豁免不悄悄发生
 SUPPRESSED = {"inline": 0, "config": 0, "baseline": 0}
 
@@ -553,6 +553,8 @@ def load_config(root, explicit=None):
             raise ConfigError("allow[%d] 必须写 reason（豁免要说明理由）" % i)
         if not (a.get("rule") or a.get("path") or a.get("fingerprint")):
             raise ConfigError("allow[%d] 至少要指定 rule / path / fingerprint 之一" % i)
+    if cfg.get("fail_on") not in (None,) + SEV_LEVELS + ("never",):
+        raise ConfigError("fail_on 只能是 critical/major/minor/never")
     for rid, sev in (cfg.get("severity") or {}).items():
         if sev not in SEV_LEVELS + ("off",):
             raise ConfigError("severity.%s 只能是 critical/major/minor/off" % rid)

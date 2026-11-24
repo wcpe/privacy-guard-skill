@@ -55,6 +55,13 @@ test('行内豁免、配置 allow / ignore_paths / severity 生效且计入豁�
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('fail_on 取值非法是配置错误（退出码 3）', () => {
+  const { dir } = repo({ '.privacy-guard.json': JSON.stringify({ fail_on: 'high' }) });
+  try {
+    assert.equal(scan(dir, '--mode', 'worktree').status, 3);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('allow 缺 reason 是配置错误（退出码 3）', () => {
   const { dir } = repo({ '.privacy-guard.json': JSON.stringify({ allow: [{ rule: 'email' }] }) });
   try {
