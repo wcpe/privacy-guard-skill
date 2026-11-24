@@ -1,0 +1,39 @@
+# privacy-guard CI 扫描（GitHub Actions）。拷到 .github/workflows/privacy-scan.yml。
+# PR：只扫 base..head 新增内容；推到主线：扫工作区。结果以 SARIF 上传到 Code Scanning，critical 判失败。
+name: privacy-scan
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+permissions:
+  contents: read
+  security-events: write
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: wcpe/privacy-guard-skill
+          path: .privacy-guard-tool
+      - name: 扫描
+        run: |
+          # 工具移出工作区，免得扫工作区时把它自己扫进去
+          mv .privacy-guard-tool "$RUNNER_TEMP/privacy-guard"
+          SCAN="$RUNNER_TEMP/privacy-guard/skills/privacy-guard/scripts/scan.py"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            ARGS="--since origin/${{ github.base_ref }}"
+          else
+            ARGS="--mode worktree"
+          fi
+          python3 "$SCAN" $ARGS --path . --format md --fail-on critical | tee -a "$GITHUB_STEP_SUMMARY" || code=$?
+          python3 "$SCAN" $ARGS --path . --format sarif --fail-on never --out "$RUNNER_TEMP/privacy"
+          exit ${code:-0}
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: ${{ runner.temp }}/privacy.sarif
+          category: privacy-guard

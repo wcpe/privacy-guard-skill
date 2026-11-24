@@ -1,0 +1,9 @@
+- id: privacy-guard
+  name: privacy-guard（暂存区隐私/敏感数据扫描）
+  description: 提交前扫暂存内容，命中 critical 拦截；读项目 .privacy-guard.json 与基线
+  entry: skills/privacy-guard/scripts/scan.py
+  args: [--mode, staged, --format, md, --fail-on, critical]
+  language: script
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit]
