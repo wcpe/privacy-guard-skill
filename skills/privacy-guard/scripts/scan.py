@@ -100,7 +100,10 @@ def _in_hex_run(m):
     if b - a >= 20 and b - a > m.end() - m.start():
         return True
     # UUID 每组最长只有 12 位，单看连续十六进制串不够长，按 UUID 整体形状判断
-    return any(u.start() <= m.start() and m.end() <= u.end() for u in _UUID_RE.finditer(s))
+    # 只在命中附近 36 字符窗口内找，避免长行里每个候选都全行搜索
+    lo = max(0, m.start() - 36)
+    win = s[lo:m.end() + 36]
+    return any(lo + u.start() <= m.start() and m.end() <= lo + u.end() for u in _UUID_RE.finditer(win))
 
 
 _UUID_RE = re.compile(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}")
