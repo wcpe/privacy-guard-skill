@@ -3,7 +3,7 @@
 // 工具 privacy_scan：复用 Python 引擎 scan.py，返回**脱敏**的分级结果（counts + findings）。只读。
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -40,8 +40,10 @@ function privacyScan (args) {
   const py = findPython()
   if (!py) return text('未找到可用的 python——扫描引擎 scan.py 依赖 python，请先安装。', true)
   // Devin 下 MCP 进程的 cwd 是插件目录而不是用户项目：没传 path 时用宿主给的项目根，仍落在插件目录就要求显式传
-  const dir = resolve(args.path || process.env.DEVIN_PROJECT_DIR || process.env.CLAUDE_PROJECT_DIR || process.cwd())
-  if (!args.path && dir === PLUGIN_ROOT) return text('请用 path 参数传入要扫描的项目根目录（绝对路径）：当前工作目录是插件自身目录，不是你的项目。', true)
+  // 相对 path 也以项目根为基准解析，而不是 MCP 进程 cwd
+  const project = process.env.DEVIN_PROJECT_DIR || process.env.CLAUDE_PROJECT_DIR || process.cwd()
+  const dir = resolve(project, args.path || '.')
+  if (dir === PLUGIN_ROOT && !(args.path && isAbsolute(args.path))) return text('请用 path 参数传入要扫描的项目根目录（绝对路径）：当前工作目录是插件自身目录，不是你的项目。', true)
   const mode = args.mode || 'worktree'
   const r = spawnSync(py, [SCAN, '--mode', mode, '--path', dir, '--format', 'json'], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
   if (r.error) return text('引擎执行失败：' + r.error.message, true)
