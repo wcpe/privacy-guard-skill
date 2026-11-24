@@ -52,7 +52,7 @@ process.stdin.on('end', function () {
 
   if (critical.length) {
     const reason = '[privacy-guard] ⛔ 暂存区检测到致命敏感数据(critical)，已拦下本次提交：\n\n' + critical.join('\n\n') +
-      '\n\n请移除 / 脱敏后重新提交。确属误报时，在项目根 `.privacy-guard.json` 的 `allow` 里按规则 + 路径（或指纹）登记并写明 reason，或在该行加 `privacy-guard:allow <规则>`，然后照常提交，不必用 --no-verify。'
+      '\n\n请移除 / 脱敏后重新提交。确属误报时，在项目根 `.privacy-guard.json` 的 `allow` 里按规则 + 路径（或指纹）登记并写明 reason；内容命中也可在该行加 `privacy-guard:allow <规则>`（文件名命中只能用 allow）。然后照常提交，不必用 --no-verify。'
     // decision:block 给 Devin / Claude，hookSpecificOutput.permissionDecision=deny 给 Codex / 新版 Claude
     process.stdout.write(JSON.stringify({
       decision: 'block',
