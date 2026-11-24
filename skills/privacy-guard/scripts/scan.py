@@ -133,9 +133,12 @@ _REVERSE_DOMAIN_HEADS = {"com", "org", "net", "io", "top", "cn", "dev", "me", "e
 
 def internal_host_valid(m):
     """内网主机名校验：排除 Java/Kotlin 包名与 import 里恰好含 .internal / .local 段的点分路径。
-    ① 命中正是 package / import 关键字后的包名本身，且后面不接 `/` 或 `:`（接了就是 Go 模块路径 / URL 里的真主机名）；② 命中后还接着 `.标识符`（internal 只是中间段，不是顶级域）且首段是常见顶级域
+    ⓪ 命中前是单个 `/`（文件路径段）；① 命中正是 package / import 关键字后的包名本身，且后面不接 `/` 或 `:`（接了就是 Go 模块路径 / URL 里的真主机名）；② 命中后还接着 `.标识符`（internal 只是中间段，不是顶级域）且首段是常见顶级域
     （反向域名包名）或后续段含大写（类名）。"""
     line = m.string
+    # 前面是单个 `/`（如 './config.local'、src/app.local.json）是文件路径段，不是主机名；`//` 后才可能是 URL 主机
+    if line[m.start() - 1:m.start()] == "/" and line[m.start() - 2:m.start()] != "//":
+        return False
     # 只豁免紧跟在 package / import 关键字后面的那个点分包名本身；同行注释或引号里的 URL 照常检查
     kw = re.match(r"\s*(?:package|import)\s+(?:/\*.*?\*/\s*)?(?:static\s+)?([\w.]+)", line)
     nxt = line[m.end():m.end() + 2]

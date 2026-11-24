@@ -73,6 +73,7 @@ test('十六进制校验和里的数字串、包名里的 .internal 段不误报
       'import /* 工具 */ com.acme.some_module.app.internal\n' +
       'val n = top.wcpe.allincore.layout.engine.internal.taffy.Node()\n',
     'main.go': `import "git.${'corp'}//team/pkg"\n`,
+    'app.js': `import settings from './config.local'\n`,
     'Url.kt': `import foo.Bar // 镜像 http://mirror.${'corp'}//repo\n`,
     'ids.txt': `id = 0f8fad5b-d9cb-469f-a165-a${'13812345678'}\n`,
     'real.txt': `card = ${CARD}\nhost = ${host}\ntel = 1${'3812345678'}ext.12\n`,
