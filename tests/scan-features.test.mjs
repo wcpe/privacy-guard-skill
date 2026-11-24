@@ -71,6 +71,7 @@ test('十六进制校验和里的数字串、包名里的 .internal 段不误报
       'import top.wcpe.allincore.layout.engine.internal.taffy.Node\n' +
       'package com.acme.internal/* 内部包 */\n' +
       'import /* 工具 */ com.acme.some_module.app.internal\n' +
+      'import /* a */ /* b */ com.acme.tools.internal\n' +
       'val n = top.wcpe.allincore.layout.engine.internal.taffy.Node()\n',
     'main.go': `import "git.${'corp'}//team/pkg"\n`,
     'app.js': `import settings from './config.local'\n`,

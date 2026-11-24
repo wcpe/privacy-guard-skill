@@ -141,7 +141,7 @@ def internal_host_valid(m):
     if line[m.start() - 1:m.start()] == "/" and line[m.start() - 2:m.start() - 1] not in ("/", "\\"):
         return False
     # 只豁免紧跟在 package / import 关键字后面的那个点分包名本身；同行注释或引号里的 URL 照常检查
-    kw = re.match(r"\s*(?:package|import)\s+(?:/\*.*?\*/\s*)?(?:static\s+)?([\w.]+)", line)
+    kw = re.match(r"\s*(?:package|import)\s+(?:/\*.*?\*/\s*)*(?:static\s+)?([\w.]+)", line)
     nxt = line[m.end():m.end() + 2]
     as_path = nxt[:1] == ":" or (nxt[:1] == "/" and nxt not in ("/*", "//"))  # `//`、`/*` 是注释不是路径
     if kw and kw.start(1) <= m.start() and m.end() <= kw.end(1) and not as_path:
