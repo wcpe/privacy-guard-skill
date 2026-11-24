@@ -62,7 +62,7 @@ function privacyScan (args) {
   const verdict = (c0.critical ? '🔴 发现致命泄露(critical)' : c0.major ? '🟡 发现疑似泄露(major)' : '✅ 未发现致命/疑似泄露') + (r.status === 0 ? '，门槛通过' : '，门槛不通过')
   const sup = data.suppressed || {}
   const head = `隐私扫描（${dir}，${data.scope || mode}）：${verdict}\n统计：🔴 ${c.critical || 0} · 🟡 ${c.major || 0} · 🟢 ${c.minor || 0}（退出码 ${r.status}，门槛 fail_on=${data.fail_on}：2=critical/1=达到门槛/0=通过）\n已豁免：行内 ${sup.inline || 0} · 配置 ${sup.config || 0} · 基线 ${sup.baseline || 0}\n所有片段已打码；明文请到对应位置核对。\n`
-  return text(head + '\n' + JSON.stringify({ scope: data.scope, counts: c, suppressed: sup, passed: r.status === 0, findings: data.findings || [] }, null, 2))
+  return text(head + '\n' + JSON.stringify({ scope: data.scope, counts: c, suppressed: sup, suppressed_items: data.suppressed_items || [], passed: r.status === 0, findings: data.findings || [] }, null, 2))
 }
 
 function handle (msg) {
