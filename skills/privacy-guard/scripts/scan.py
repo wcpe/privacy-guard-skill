@@ -480,20 +480,31 @@ def scan_range(root, since, until="HEAD"):
     """扫提交区间 since..until 里**新增**的内容（PR / 上个 tag 以来）：只看各提交的新增行与新增/修改的文件名，并标出提交。"""
     if _git(root, ["rev-parse", "--git-dir"]).returncode != 0:
         return [], False
-    res = _git(root, ["log", "-p", "--unified=0", "--no-color", "--no-ext-diff", "--no-renames",
-                      "--format=@@privacy-guard-commit %h", "%s..%s" % (since, until)])
-    if res.returncode != 0:
+    # quotePath=false：中文等路径不加引号；first-parent：合并提交（含解决冲突时写入的内容）按相对第一父提交的差异算新增
+    git_args = ["-c", "core.quotePath=false", "log", "--no-color", "--no-ext-diff", "--no-renames",
+                "--diff-merges=first-parent", "%s..%s" % (since, until)]
+    res = _git(root, git_args[:3] + ["-p", "--unified=0", "--format=@@privacy-guard-commit %h"] + git_args[3:])
+    names = _git(root, git_args[:3] + ["--name-only", "--diff-filter=AMC", "--format=@@privacy-guard-commit %h"] + git_args[3:])
+    if res.returncode != 0 or names.returncode != 0:
         return [], False
-    findings, commit, cur, lineno = [], "", "(range)", 0
+    findings, commit = [], ""
+    # 文件名单独从 --name-only 取：二进制文件与新建空文件没有 +++ 头，但同样要查（如 .p12、空 .env）
+    for ln in names.stdout.decode("utf-8", "replace").splitlines():
+        if ln.startswith("@@privacy-guard-commit "):
+            commit = ln[len("@@privacy-guard-commit "):]
+        elif ln.strip():
+            for f in check_filename(ln.strip()):
+                f["commit"] = commit
+                findings.append(f)
+    commit, cur, lineno = "", None, 0
     for ln in res.stdout.decode("utf-8", "replace").splitlines():
         if ln.startswith("@@privacy-guard-commit "):
             commit = ln[len("@@privacy-guard-commit "):]
         elif ln.startswith("+++ "):
-            cur = ln[6:] if ln.startswith("+++ b/") else None
-            if cur:
-                for f in check_filename(cur):
-                    f["commit"] = commit
-                    findings.append(f)
+            tgt = ln[4:]
+            if tgt.startswith('"') and tgt.endswith('"'):
+                tgt = tgt[1:-1]
+            cur = tgt[2:] if tgt.startswith("b/") else None
         elif ln.startswith("@@"):
             m = re.search(r"\+(\d+)", ln)
             lineno = int(m.group(1)) if m else 0

@@ -98,6 +98,29 @@ test('--since 只扫区间新增并带提交；无效 ref 退出码 3', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('区间扫描覆盖二进制 / 空的敏感文件、中文路径与合并提交里新写入的内容', () => {
+  const { dir, git } = repo({ 'a.txt': 'base\n' });
+  try {
+    git('add', '.'); git('commit', '-qm', 'base'); git('tag', 'v1');
+    writeFileSync(path.join(dir, 'cert.p12'), Buffer.from([0, 1, 2, 0, 255]));
+    writeFileSync(path.join(dir, '.env'), '');
+    mkdirSync(path.join(dir, '配置'));
+    writeFileSync(path.join(dir, '配置', '说明.txt'), `k = ${GLPAT}\n`);
+    git('add', '.'); git('commit', '-qm', 'add');
+    git('checkout', '-qb', 'side'); writeFileSync(path.join(dir, 'a.txt'), 'side\n'); git('commit', '-qam', 'side');
+    git('checkout', '-q', '-'); writeFileSync(path.join(dir, 'a.txt'), 'main\n'); git('commit', '-qam', 'main');
+    spawnSync('git', ['merge', '-q', 'side'], { cwd: dir });
+    writeFileSync(path.join(dir, 'a.txt'), `resolved ${NPM}\n`);
+    git('add', 'a.txt'); git('commit', '-qm', 'merge');
+    const { d } = json(dir, '--since', 'v1');
+    const got = d.findings.map((f) => `${f.rule}@${f.path}`).sort();
+    assert.ok(got.includes('pkcs12-file@cert.p12') || got.some((g) => g.endsWith('@cert.p12')), got.join());
+    assert.ok(got.some((g) => g.endsWith('@.env')), got.join());
+    assert.ok(got.includes('gitlab-token@配置/说明.txt'), got.join());
+    assert.ok(got.includes('npm-token@a.txt'), got.join());
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('--fail-on 门槛与 SARIF 输出', () => {
   const { dir } = repo({ 'a.txt': 'host = db.corp\n' });
   try {
