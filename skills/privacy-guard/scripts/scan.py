@@ -137,10 +137,10 @@ def internal_host_valid(m):
     （反向域名包名）或后续段含大写（类名）。"""
     line = m.string
     # 只豁免紧跟在 package / import 关键字后面的那个点分包名本身；同行注释或引号里的 URL 照常检查
-    kw = re.match(r"\s*(?:package|import)\s+(?:static\s+)?", line)
+    kw = re.match(r"\s*(?:package|import)\s+(?:/\*.*?\*/\s*)?(?:static\s+)?([\w.]+)", line)
     nxt = line[m.end():m.end() + 2]
     as_path = nxt[:1] == ":" or (nxt[:1] == "/" and nxt not in ("/*", "//"))  # `//`、`/*` 是注释不是路径
-    if kw and m.start() == kw.end() and not as_path:
+    if kw and kw.start(1) <= m.start() and m.end() <= kw.end(1) and not as_path:
         return False
     rest = re.match(r"\.([A-Za-z_][\w.]*)", line[m.end():])
     if rest:
