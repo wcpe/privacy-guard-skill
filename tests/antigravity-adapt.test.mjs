@@ -41,8 +41,9 @@ test('Antigravity 插件清单与 MCP 配置合法且版本与其余三端一致
   assert.deepEqual(mcp.mcpServers['privacy-guard'].args, ['${PLUGIN_ROOT}/mcp/privacy-mcp.mjs']);
 });
 
-test('Antigravity PreToolUse 提交门：命中 critical 返回 exit 0 + decision:deny 且报告打码，干净暂存返回 {}', () => {
-  const dirty = stagedRepo(`aws_access_key_id = ${FAKE_KEY}\n`);
+test('Antigravity PreToolUse 提交门：命中 critical 返回 exit 0 + decision:deny 且长报告不截断，干净暂存返回 decision:allow', () => {
+  const manyLines = Array.from({ length: 800 }, (_, i) => `aws_access_key_${i} = ${FAKE_KEY}`).join('\n') + '\n';
+  const dirty = stagedRepo(manyLines);
   const clean = stagedRepo('hello\n');
   try {
     const blocked = runHook({
@@ -52,6 +53,7 @@ test('Antigravity PreToolUse 提交门：命中 critical 返回 exit 0 + decisio
     assert.equal(blocked.status, 0, 'Antigravity 阻断必须退出码 0');
     const out = JSON.parse(blocked.stdout);
     assert.equal(out.decision, 'deny');
+    assert.ok(out.reason.length > 65536, '长报告须完整输出而不被管道缓冲截断');
     assert.doesNotMatch(out.reason, new RegExp(FAKE_KEY), '报告必须打码');
 
     const allowed = runHook({
@@ -59,7 +61,14 @@ test('Antigravity PreToolUse 提交门：命中 critical 返回 exit 0 + decisio
       workspacePaths: [clean],
     });
     assert.equal(allowed.status, 0);
-    assert.deepEqual(JSON.parse(allowed.stdout), {});
+    assert.deepEqual(JSON.parse(allowed.stdout), { decision: 'allow' });
+
+    const nonCommit = runHook({
+      toolCall: { name: 'run_command', args: { CommandLine: 'git status', Cwd: clean } },
+      workspacePaths: [clean],
+    });
+    assert.equal(nonCommit.status, 0);
+    assert.deepEqual(JSON.parse(nonCommit.stdout), { decision: 'allow' });
   } finally {
     rmSync(dirty, { recursive: true, force: true });
     rmSync(clean, { recursive: true, force: true });

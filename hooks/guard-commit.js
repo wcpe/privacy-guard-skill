@@ -14,8 +14,14 @@ process.stdin.on('end', function () {
   let input
   try { input = JSON.parse(raw || '{}') || {} } catch (e) { process.exit(0) }
   const isAntigravity = process.env.AGENT_HOOK_HOST === 'antigravity' || Boolean(input.toolCall)
+  const writeAndExit = function (payload, code) {
+    process.stdout.write(payload, function () { process.exit(code) })
+  }
   const allow = function () {
-    if (isAntigravity) process.stdout.write('{}\n')
+    if (isAntigravity) {
+      writeAndExit(JSON.stringify({ decision: 'allow' }) + '\n', 0)
+      return
+    }
     process.exit(0)
   }
 
@@ -25,8 +31,8 @@ process.stdin.on('end', function () {
   const ARG = '("[^"]+"|\'[^\']+\'|[^\\s;&|]+)'
   const commitRe = new RegExp('\\bgit\\s+(?:-C\\s+' + ARG + '\\s+)?commit\\b', 'g')
   const commits = Array.from(cmd.matchAll(commitRe))
-  if (!commits.length) allow()
-  if (/--no-verify\b/.test(cmd)) allow()
+  if (!commits.length) return allow()
+  if (/--no-verify\b/.test(cmd)) return allow()
 
   // 提交实际发生的仓库：Antigravity run_command 的 Cwd / workspacePaths、Devin exec 的 workdir、命令开头的 `cd <dir> &&`、每处 `git -C <dir>`，否则为事件 cwd / hook cwd
   const unquote = function (s) { return s.replace(/^["']|["']$/g, '') }
@@ -42,7 +48,7 @@ process.stdin.on('end', function () {
   const py = findPython()
   if (!py) {
     console.error('[privacy-guard] 提交门跳过：未找到可用的 python（扫描引擎依赖它）。装好 python 即自动生效。')
-    allow()
+    return allow()
   }
   const scan = path.join(__dirname, '..', 'skills', 'privacy-guard', 'scripts', 'scan.py')
   const critical = []
@@ -64,18 +70,18 @@ process.stdin.on('end', function () {
     const reason = '[privacy-guard] ⛔ 暂存区检测到致命敏感数据(critical)，已拦下本次提交：\n\n' + critical.join('\n\n') +
       '\n\n请移除 / 脱敏后重新提交。确属误报时，在项目根 `.privacy-guard.json` 的 `allow` 里按规则 + 路径（或指纹）登记并写明 reason；内容命中也可在该行加 `privacy-guard:allow <规则>`（文件名命中只能用 allow）。然后照常提交，不必用 --no-verify。'
     if (isAntigravity) {
-      // Antigravity 要求退出码为 0 并输出 decision: deny；非 0 会被视为 hook 异常并 fail-open
-      process.stdout.write(JSON.stringify({ decision: 'deny', reason: reason }) + '\n')
-      process.exit(0)
+      // Antigravity 要求退出码为 0 并输出 decision: deny；等待 stdout 刷新完毕再退出以防长报告截断
+      writeAndExit(JSON.stringify({ decision: 'deny', reason: reason }) + '\n', 0)
+      return
     }
     // decision:block 给 Devin / Claude，hookSpecificOutput.permissionDecision=deny 给 Codex / 新版 Claude
-    process.stdout.write(JSON.stringify({
+    console.error(reason)
+    writeAndExit(JSON.stringify({
       decision: 'block',
       reason: reason,
       hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason }
-    }) + '\n')
-    console.error(reason)
-    process.exit(2)
+    }) + '\n', 2)
+    return
   }
   if (major.length) {
     console.error('[privacy-guard] ⚠ 暂存区有疑似敏感数据(major)，未拦截，请核实：\n\n' + major.join('\n\n'))
