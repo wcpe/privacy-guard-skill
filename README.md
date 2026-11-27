@@ -1,6 +1,6 @@
 # Privacy Guard
 
-一个「隐私 / 敏感数据检测」AI 编码技能：扫描**当前项目工作区**与 **git 全量历史**，找出被硬编码进去的敏感数据，按**五大类**分级、**脱敏**报告，并给出**按类修复指引**。同一套 `SKILL.md` 通用于 **Claude Code / Devin / OpenAI Codex**（插件一键装）与任何只认技能目录的 agent（opencode、Cursor、Gemini CLI 等，拷目录即用）。在 [sdd-skills](https://github.com/wcpe/sdd-skills) 项目里，验收 / 发版 / 审查 / 改造技能会自动接入它。
+一个「隐私 / 敏感数据检测」AI 编码技能：扫描**当前项目工作区**与 **git 全量历史**，找出被硬编码进去的敏感数据，按**五大类**分级、**脱敏**报告，并给出**按类修复指引**。同一套 `SKILL.md` 通用于 **Claude Code / Devin / OpenAI Codex / Antigravity**（插件一键装）与任何只认技能目录的 agent（opencode、Cursor、Gemini CLI 等，拷目录即用）。在 [sdd-skills](https://github.com/wcpe/sdd-skills) 项目里，验收 / 发版 / 审查 / 改造技能会自动接入它。
 
 **只检测、只报告、给指引——绝不替你改写 git 历史、force-push 或吊销密钥**（这些不可逆、牵动远端与团队的操作，交由你知情后亲自执行）。
 
@@ -98,6 +98,37 @@ cp -r privacy-guard-skill/skills/* ~/.codex/skills/     # 全局：所有项目�
 
 本仓库也带 `.codex-plugin/plugin.json`（`skills` 指向 `./skills/`），若你的 Codex 版本支持插件系统，可按其插件流程安装；以目录安装为准。
 
+### Antigravity（插件）
+
+原生插件清单位于 `.antigravity-plugin/plugin.json`，通过 CLI 一键安装后自动加载 `skills/privacy-guard` 技能（支持 `/privacy-guard`）与 `mcp_config.json`（`privacy_scan` MCP 工具），并同步到 Antigravity App 与 CLI：
+
+```bash
+agy plugin install https://github.com/wcpe/privacy-guard-skill
+agy plugin list
+```
+
+> **关于提交门 Hook**：根目录 `hooks.json` 保留给 Devin 使用（Devin 顶层事件数组 schema 与 Antigravity 命名组 schema 不兼容）。如需在 Antigravity 会话里启用提交门护栏，将以下片段合并进全局 `~/.gemini/config/hooks.json`（或项目 `.agents/hooks.json`）即可：
+>
+> ```json
+> {
+>   "privacy-guard-commit": {
+>     "enabled": true,
+>     "PreToolUse": [
+>       {
+>         "matcher": "run_command",
+>         "hooks": [
+>           {
+>             "type": "command",
+>             "command": "sh \"$HOME/.gemini/config/plugins/privacy-guard/hooks/run-hook.sh\" --host antigravity guard-commit.js",
+>             "timeout": 30
+>           }
+>         ]
+>       }
+>     ]
+>   }
+> }
+> ```
+
 ### opencode
 
 opencode 原生认 `SKILL.md`（并兼容 `.claude/skills/`），靠目录发现：
@@ -125,6 +156,7 @@ cp -r privacy-guard-skill/skills/* ~/.config/opencode/skills/   # 全局
 
 ```
 privacy-guard-skill/                 ← 仓库根 = 插件本体（分发经 wcpe 组织市场 wcpe/claude-plugins）
+├── .antigravity-plugin/plugin.json  Antigravity 插件清单（技能 + mcp_config.json）
 ├── .claude-plugin/plugin.json       Claude Code 插件清单
 ├── .codex-plugin/plugin.json        Codex 插件清单（技能 + .codex-mcp.json + hooks/hooks.json）
 ├── .codex-mcp.json                  Codex 的 MCP 注册
@@ -132,6 +164,7 @@ privacy-guard-skill/                 ← 仓库根 = 插件本体（分发经 wc
 ├── .privacy-guard.json              本仓库自身的扫描配置（规则文档 / 测试夹具豁免）
 ├── .devin-plugin/plugin.json        Devin 插件清单（内联 MCP；hook 见根目录 hooks.json）
 ├── .mcp.json                        MCP server 注册（Claude Code）
+├── mcp_config.json                  MCP server 注册（Antigravity，使用 ${PLUGIN_ROOT}）
 ├── hooks.json                       Devin 提交门 hook（匹配 exec）
 ├── hooks/                           提交门护栏（Node 胶水 → scan.py）
 │   ├── hooks.json                   Claude Code 提交门 hook（匹配 Bash）

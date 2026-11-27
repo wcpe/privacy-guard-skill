@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "privacy-guard": {
+      "command": "node",
+      "args": [
+        "${PLUGIN_ROOT}/mcp/privacy-mcp.mjs"
+      ]
+    }
+  }
+}

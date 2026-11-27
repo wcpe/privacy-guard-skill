@@ -1,0 +1,24 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "privacy-guard",
+  "displayName": "Privacy Guard",
+  "version": "0.4.1",
+  "description": "隐私与敏感数据检测：用 rg+Python 引擎扫描工作区与 git 全量历史，按五大类分级脱敏报告并给出修复指引，附只读 MCP 工具 privacy_scan。",
+  "suggestedPrompts": [
+    "扫描当前项目工作区与 git 历史是否存在硬编码密钥或隐私泄露",
+    "检查本次暂存区改动是否有敏感信息泄露风险",
+    "为当前仓库安装 privacy-guard 的 git pre-commit 提交前拦截钩子"
+  ],
+  "author": {
+    "name": "wcpe",
+    "url": "https://github.com/wcpe"
+  },
+  "homepage": "https://github.com/wcpe/privacy-guard-skill",
+  "repository": "https://github.com/wcpe/privacy-guard-skill",
+  "keywords": [
+    "privacy",
+    "secret-scanning",
+    "pii",
+    "security"
+  ]
+}
